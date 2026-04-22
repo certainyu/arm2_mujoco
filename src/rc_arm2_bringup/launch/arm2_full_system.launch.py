@@ -1,0 +1,87 @@
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    enable_viewer = LaunchConfiguration("enable_viewer")
+    start_moveit = LaunchConfiguration("start_moveit")
+    start_task_goal_server = LaunchConfiguration("start_task_goal_server")
+    start_payload_scene_sync = LaunchConfiguration("start_payload_scene_sync")
+    start_rviz = LaunchConfiguration("start_rviz")
+
+    sim_control_launch = PathJoinSubstitution([
+        FindPackageShare("rc_arm2_control"),
+        "launch",
+        "arm2_sim_control.launch.py",
+    ])
+    move_group_launch = PathJoinSubstitution([
+        FindPackageShare("arm2_moveit_config"),
+        "launch",
+        "move_group.launch.py",
+    ])
+    rviz_launch = PathJoinSubstitution([
+        FindPackageShare("arm2_moveit_config"),
+        "launch",
+        "moveit_rviz.launch.py",
+    ])
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            "enable_viewer",
+            default_value="true",
+            description="Open the MuJoCo viewer window.",
+        ),
+        DeclareLaunchArgument(
+            "start_moveit",
+            default_value="true",
+            description="Start move_group and robot_state_publisher.",
+        ),
+        DeclareLaunchArgument(
+            "start_task_goal_server",
+            default_value="true",
+            description="Start the persistent /arm2_task_goal action server.",
+        ),
+        DeclareLaunchArgument(
+            "start_payload_scene_sync",
+            default_value="true",
+            description="Start payload collision-object synchronization for MoveIt.",
+        ),
+        DeclareLaunchArgument(
+            "start_rviz",
+            default_value="false",
+            description="Start RViz with MoveIt parameters.",
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(sim_control_launch),
+            launch_arguments={"enable_viewer": enable_viewer}.items(),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(move_group_launch),
+            condition=IfCondition(start_moveit),
+        ),
+        Node(
+            package="rc_arm2_moveit_client",
+            executable="arm2_plan_to_task_goal",
+            name="arm2_plan_to_task_goal",
+            output="screen",
+            condition=IfCondition(start_task_goal_server),
+        ),
+        Node(
+            package="rc_arm2_moveit_client",
+            executable="arm2_payload_scene_sync",
+            name="arm2_payload_scene_sync",
+            output="screen",
+            condition=IfCondition(start_payload_scene_sync),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(rviz_launch),
+            condition=IfCondition(start_rviz),
+        ),
+    ])

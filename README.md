@@ -87,11 +87,34 @@ colcon build --packages-select \
   rc_arm2_description \
   rc_arm2_control \
   arm2_moveit_config \
-  rc_arm2_moveit_client
+  rc_arm2_moveit_client \
+  rc_arm2_bringup
 source install/setup.bash
 ```
 
 ## Start The System
+
+Recommended bringup:
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch rc_arm2_bringup arm2_full_system.launch.py
+```
+
+Headless:
+
+```bash
+ros2 launch rc_arm2_bringup arm2_full_system.launch.py enable_viewer:=false
+```
+
+With RViz:
+
+```bash
+ros2 launch rc_arm2_bringup arm2_full_system.launch.py start_rviz:=true
+```
+
+Manual startup for debugging:
 
 Terminal 1: start MuJoCo simulation and the custom torque controller.
 

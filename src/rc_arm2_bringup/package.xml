@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rc_arm2_bringup</name>
+  <version>0.1.0</version>
+  <description>Bringup launch files for arm2 simulation, control, MoveIt, and task goal clients.</description>
+  <maintainer email="aqua@example.com">aqua</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>arm2_moveit_config</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rc_arm2_control</exec_depend>
+  <exec_depend>rc_arm2_moveit_client</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
