@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rc_arm2_description</name>
+  <version>0.1.0</version>
+  <description>URDF and mesh assets for the 4-DOF arm2 manipulator.</description>
+  <maintainer email="aqua@example.com">aqua</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

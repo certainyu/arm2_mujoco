@@ -1,0 +1,53 @@
+arm2_torque_trajectory_controller:
+  ros__parameters:
+    action_name: /arm2_controller/follow_joint_trajectory
+    # effort_pub_ 发布关节力矩命令
+    command_topic: /arm2/command/effort
+    # joint_state_sub_ 订阅关节状态
+    joint_state_topic: /joint_states
+    # payload_sub_ 订阅负载吸附状态，请外部结点发布
+    payload_command_topic: /arm2/payload_attached
+    # payload_active_pub_ 发布当前使用的模型是带负载还是空载，供 MuJoCo 订阅以启用/关闭 weld 连接
+    payload_active_topic: /arm2/payload_active
+    # state_pub_ 发布控制器状态
+    state_topic: /arm2_controller/state
+    # 控制周期频率，单位 Hz，默认 250 Hz
+    control_rate_hz: 250.0
+    # 每秒向 FollowJointTrajectory action client 反馈 20 次状态，避免 feedback 消息太频繁。
+    feedback_rate_hz: 20.0
+    joint_names: [j1, j2, j3, j4]
+    # 每个关节的力矩限制，kp, kd
+    effort_limits: [10.0, 10.0, 10.0, 10.0]
+    kp: [20.0, 20.0, 15.0, 5.0]
+    kd: [1.5, 1.5, 1.0, 0.25]
+    # 如果连续的力矩饱和时间超过 saturation_abort_sec_，则认为执行失败并进入 FAULT 状态。
+    saturation_abort_sec: 0.25
+    # 执行轨迹时，如果最终位置与目标位置的误差小于 goal_tolerance_rad_，
+    # 且持续时间超过 settle_time_sec_，则认为执行成功并进入 HOLDING 状态。
+    goal_tolerance_rad: 0.02
+    settle_time_sec: 0.5
+    # 负载相关参数，payload_joint_name_ 是负载挂接的关节名，payload_mass_ 是负载质量，
+    # payload_cube_side_ 是负载正方体边长。
+    payload_joint_name: j4
+    # 默认负载质量 0.2 kg，边长 0.08 m，用户可以根据实际负载调整这两个参数以获得更准确的动力学补偿。
+    payload_mass: 0.2
+    payload_cube_side: 0.08
+    tool0_xyz: [0.0, 0.0, 0.0624]
+    tool0_rpy: [0.0, 0.0, 0.0]
+
+arm2_mujoco_sim:
+  ros__parameters:
+    command_topic: /arm2/command/effort
+    joint_state_topic: /joint_states
+    payload_command_topic: /arm2/payload_attached
+    payload_active_topic: /arm2/payload_active
+    sync_payload_with_controller: true
+    enable_viewer: true
+    timestep: 0.001
+    joint_state_rate_hz: 250.0
+    joint_names: [j1, j2, j3, j4]
+    effort_limits: [10.0, 10.0, 10.0, 10.0]
+    payload_mass: 0.2
+    payload_cube_side: 0.08
+    tool0_xyz: [0.0, 0.0, 0.0624]
+    tool0_rpy: [0.0, 0.0, 0.0]

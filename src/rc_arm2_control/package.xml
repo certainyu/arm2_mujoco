@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rc_arm2_control</name>
+  <version>0.1.0</version>
+  <description>Custom torque trajectory controller and MuJoCo simulator for arm2.</description>
+  <maintainer email="aqua@example.com">aqua</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>ament_index_cpp</build_depend>
+  <build_depend>control_msgs</build_depend>
+  <build_depend>eigen</build_depend>
+  <build_depend>pinocchio</build_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_action</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>trajectory_msgs</build_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
