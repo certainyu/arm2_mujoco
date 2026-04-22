@@ -160,14 +160,12 @@ class Arm2MujocoSim(Node):
         )
         self.payload_mass = float(self.declare_parameter("payload_mass", 0.2).value)
         self.payload_cube_side = float(self.declare_parameter("payload_cube_side", 0.08).value)
-        self.tool0_xyz = np.array(
-            list(self.declare_parameter("tool0_xyz", [0.0, 0.0, 0.0624]).value),
+        self.tool0_frame_name = self.declare_parameter("tool0_frame_name", "tool0").value
+        self.payload_center_from_tool = np.array(
+            [0.0, 0.0, self.payload_cube_side * 0.5],
             dtype=float,
         )
-        self.tool0_rpy = np.array(
-            list(self.declare_parameter("tool0_rpy", [0.0, 0.0, 0.0]).value),
-            dtype=float,
-        )
+        self.identity_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
 
         if len(self.joint_names) != 4:
             raise RuntimeError("joint_names must contain exactly 4 names")
@@ -195,14 +193,15 @@ class Arm2MujocoSim(Node):
         self.payload_body_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_BODY, "payload_cube"
         )
-        self.l4_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "l4")
+        self.tool0_body_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            self.tool0_frame_name,
+        )
+        if self.tool0_body_id < 0:
+            raise RuntimeError(f"tool0 frame/body does not exist in URDF/MJCF: {self.tool0_frame_name}")
         self.payload_qpos_adr = int(self.model.jnt_qposadr[self.payload_joint_id])
         self.payload_qvel_adr = int(self.model.jnt_dofadr[self.payload_joint_id])
-        self.payload_rel_pos = self.tool0_xyz + quat_rotate(
-            rpy_to_quat(self.tool0_rpy),
-            np.array([0.0, 0.0, self.payload_cube_side * 0.5], dtype=float),
-        )
-        self.payload_rel_quat = rpy_to_quat(self.tool0_rpy)
         self.payload_attached = False
         self.requested_payload_attached = False
         if self.payload_weld_id >= 0:
@@ -252,10 +251,10 @@ class Arm2MujocoSim(Node):
 
     def _move_payload_to_tool(self) -> None:
         mujoco.mj_forward(self.model, self.data)
-        l4_pos = np.array(self.data.xpos[self.l4_body_id], dtype=float)
-        l4_quat = np.array(self.data.xquat[self.l4_body_id], dtype=float)
-        payload_pos = l4_pos + quat_rotate(l4_quat, self.payload_rel_pos)
-        payload_quat = quat_mul(l4_quat, self.payload_rel_quat)
+        tool0_pos = np.array(self.data.xpos[self.tool0_body_id], dtype=float)
+        tool0_quat = np.array(self.data.xquat[self.tool0_body_id], dtype=float)
+        payload_pos = tool0_pos + quat_rotate(tool0_quat, self.payload_center_from_tool)
+        payload_quat = tool0_quat
         payload_quat = payload_quat / np.linalg.norm(payload_quat)
 
         qadr = self.payload_qpos_adr
@@ -357,19 +356,14 @@ class Arm2MujocoSim(Node):
             )
 
         equality = ET.SubElement(mjcf, "equality")
-        rel_pos = self.tool0_xyz + quat_rotate(
-            rpy_to_quat(self.tool0_rpy),
-            np.array([0.0, 0.0, self.payload_cube_side * 0.5], dtype=float),
-        )
-        rel_quat = rpy_to_quat(self.tool0_rpy)
         ET.SubElement(
             equality,
             "weld",
             {
                 "name": "payload_weld",
-                "body1": "l4",
+                "body1": self.tool0_frame_name,
                 "body2": "payload_cube",
-                "relpose": fmt(list(rel_pos) + list(rel_quat)),
+                "relpose": fmt(list(self.payload_center_from_tool) + list(self.identity_quat)),
                 "solref": "0.005 1",
                 "solimp": "0.9 0.95 0.001",
             },

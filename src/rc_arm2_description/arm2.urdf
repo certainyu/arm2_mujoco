@@ -239,5 +239,17 @@
       effort="10"
       velocity="1.0" />
   </joint>
+
+  <link name="tool0" />
+
+  <joint
+    name="tool0_fixed"
+    type="fixed">
+    <origin
+      xyz="0 0 0.0624"
+      rpy="0 0 0" />
+    <parent link="l4" />
+    <child link="tool0" />
+  </joint>
   
 </robot>

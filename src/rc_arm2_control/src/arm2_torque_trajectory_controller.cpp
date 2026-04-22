@@ -14,8 +14,6 @@
 #include <vector>
 
 #include <Eigen/Core>
-#include <Eigen/Geometry>
-
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "control_msgs/action/follow_joint_trajectory.hpp"
 #include "pinocchio/algorithm/rnea.hpp"
@@ -70,44 +68,6 @@ std::array<double, kDof> to_array4(
   std::array<double, kDof> out{};
   std::copy(values.begin(), values.end(), out.begin());
   return out;
-}
-
-/**
- * @brief 将参数中的 vector<double> 列表转换为 Eigen 三维向量。
- *
- * @param values 从 ROS 参数读取到的数组；为空时使用 defaults。
- * @param defaults 默认三维向量。
- * @param name 参数名，仅用于报错信息。
- * @return Eigen::Vector3d 三维向量。
- *
- * @throw std::runtime_error 当 values 非空但长度不是 3 时抛出。
- */
-Eigen::Vector3d vector3_param(
-  const std::vector<double> & values,
-  const Eigen::Vector3d & defaults,
-  const std::string & name)
-{
-  if (values.empty()) {
-    return defaults;
-  }
-  if (values.size() != 3) {
-    throw std::runtime_error(name + " must contain exactly 3 values");
-  }
-  return Eigen::Vector3d(values[0], values[1], values[2]);
-}
-
-/**
- * @brief 将 RPY 欧拉角转换为旋转矩阵。
- *
- * @param rpy 按 roll、pitch、yaw 顺序排列的欧拉角，单位为弧度。
- * @return Eigen::Matrix3d 对应的 3x3 旋转矩阵。
- */
-Eigen::Matrix3d rpy_to_matrix(const Eigen::Vector3d & rpy)
-{
-  const Eigen::AngleAxisd roll(rpy.x(), Eigen::Vector3d::UnitX());
-  const Eigen::AngleAxisd pitch(rpy.y(), Eigen::Vector3d::UnitY());
-  const Eigen::AngleAxisd yaw(rpy.z(), Eigen::Vector3d::UnitZ());
-  return (yaw * pitch * roll).toRotationMatrix();
 }
 
 /**
@@ -195,9 +155,9 @@ public:
     // 且持续时间超过 settle_time_sec_，则认为执行成功并进入 HOLDING 状态。
     goal_tolerance_rad_ = declare_parameter<double>("goal_tolerance_rad", 0.02);
     settle_time_sec_ = declare_parameter<double>("settle_time_sec", 0.5);
-    // 负载相关参数，payload_joint_name_ 是负载挂接的关节名，payload_mass_ 是负载质量，
-    // payload_cube_side_ 是负载正方体边长。
-    payload_joint_name_ = declare_parameter<std::string>("payload_joint_name", "j4");
+    // 负载相关参数。tool0_frame_name_ 必须存在于 URDF/Pinocchio 模型中；
+    // 负载会固定在 tool0 的 +Z 方向半个正方体边长处。
+    tool0_frame_name_ = declare_parameter<std::string>("tool0_frame_name", "tool0");
     // 默认负载质量 0.2 kg，边长 0.08 m，用户可以根据实际负载调整这两个参数以获得更准确的动力学补偿。
     payload_mass_ = declare_parameter<double>("payload_mass", 0.2);
     payload_cube_side_ = declare_parameter<double>("payload_cube_side", 0.08);
@@ -223,18 +183,6 @@ public:
       kd_defaults, 
       "kd");
 
-    // tool0 指吸盘
-    // tool0 相对于 l4 坐标系：
-    // 位置偏移 = x 0, y 0, z 0.0624 m
-    // 姿态偏移 = roll 0, pitch 0, yaw 0
-    // 先找到 l4 上的 tool0 点，再沿 tool0 的 z 方向加半个方块边长，得到方块质心位置。
-    tool0_xyz_ = vector3_param(
-      declare_parameter<std::vector<double>>("tool0_xyz", {0.0, 0.0, 0.0624}),
-      Eigen::Vector3d(0.0, 0.0, 0.0624), "tool0_xyz");
-    tool0_rpy_ = vector3_param(
-      declare_parameter<std::vector<double>>("tool0_rpy", {0.0, 0.0, 0.0}),
-      Eigen::Vector3d::Zero(), "tool0_rpy");
-    
     // 从参数服务器读取 urdf_path 参数，如果用户没有提供，就使用 rc_arm2_description 包中的arm2.urdf
     auto urdf_path = declare_parameter<std::string>("urdf_path", "");
     if (urdf_path.empty()) {
@@ -371,13 +319,14 @@ private:
    * +Z 方向 payload_cube_side / 2 的位置。惯量使用立方体质心惯量
    * Ixx = Iyy = Izz = (1/6) * m * a^2。
    *
-   * @throw std::runtime_error 当负载挂接关节不存在、负载质量非法、
+   * @throw std::runtime_error 当 URDF 中不存在 tool0 frame、负载质量非法、
    * 或正方体边长非法时抛出。
    */
   void add_payload_to_loaded_model()
   {
-    if (!loaded_model_.existJointName(payload_joint_name_)) {
-      throw std::runtime_error("payload_joint_name does not exist: " + payload_joint_name_);
+    // tool0 是吸盘坐标系的唯一几何来源；如果 URDF 里没有它，直接失败，避免静默使用过期配置。
+    if (!loaded_model_.existFrame(tool0_frame_name_)) {
+      throw std::runtime_error("tool0 frame does not exist in URDF: " + tool0_frame_name_);
     }
     if (payload_mass_ <= 0.0) {
       throw std::runtime_error("payload_mass must be positive");
@@ -386,17 +335,24 @@ private:
       throw std::runtime_error("payload_cube_side must be positive");
     }
 
-    const auto payload_joint_id = loaded_model_.getJointId(payload_joint_name_);
     const double side = payload_cube_side_;
     const double inertia_diag = (1.0 / 6.0) * payload_mass_ * side * side;
     const Eigen::Matrix3d inertia_com = Eigen::Matrix3d::Identity() * inertia_diag;
     const pinocchio::Inertia payload_inertia(payload_mass_, Eigen::Vector3d::Zero(), inertia_com);
 
-    const Eigen::Matrix3d tool_rotation = rpy_to_matrix(tool0_rpy_);
-    const Eigen::Vector3d cube_center_in_l4 =
-      tool0_xyz_ + tool_rotation * Eigen::Vector3d(0.0, 0.0, side * 0.5);
-    const pinocchio::SE3 placement(tool_rotation, cube_center_in_l4);
-    loaded_model_.appendBodyToJoint(payload_joint_id, payload_inertia, placement);
+    const pinocchio::FrameIndex tool_frame_id = loaded_model_.getFrameId(tool0_frame_name_);
+    const auto & tool_frame = loaded_model_.frames[tool_frame_id];
+    const pinocchio::JointIndex payload_joint_id = tool_frame.parentJoint;
+    const pinocchio::SE3 tool_placement = tool_frame.placement;
+
+    const pinocchio::SE3 cube_center_from_tool(
+      Eigen::Matrix3d::Identity(),
+      Eigen::Vector3d(0.0, 0.0, side * 0.5));
+      
+    loaded_model_.appendBodyToJoint(
+      payload_joint_id,
+      payload_inertia,
+      tool_placement * cube_center_from_tool);
   }
 
   /**
@@ -778,7 +734,8 @@ private:
     std::array<double, kDof> command{};
     bool saturated = false;
     for (std::size_t i = 0; i < kDof; ++i) {
-      double tau = feedforward[v_indices_[i]];
+      double tau = 0.0;
+      tau += feedforward[v_indices_[i]];
       tau += kp_[i] * (target.q[i] - current_q_[i]);
       tau += kd_[i] * (target.dq[i] - current_dq_[i]);
 
@@ -1041,8 +998,8 @@ private:
   // 发布控制器状态的 topic，类型为 std_msgs::msg::String，
   // 包含 "initialized"、"goal accepted"、"payload switch pending"、"holding torque saturation fault" 等状态信息
   std::string state_topic_;
-  // URDF 中负载挂接的关节名称，必须存在于模型中。
-  std::string payload_joint_name_;
+  // URDF 中吸盘工具坐标系名称；负载位置只从该 frame 读取，不再从 YAML 配置几何偏移。
+  std::string tool0_frame_name_{"tool0"};
 
   // 控制参数配置，均可通过 YAML 文件覆盖。
   // 控制周期频率，单位 Hz，默认 250 Hz
@@ -1061,12 +1018,6 @@ private:
   double payload_mass_{0.2};
   // 正方体边长，单位米，默认 0.08 m（8 cm）。根据质量和尺寸计算惯量。
   double payload_cube_side_{0.08};
-  // 工具坐标系（正方体挂接点）在 L4 末端执行器坐标系中的位置和姿态。
-  // 默认位置在 L4 末端沿 z 轴正向 6.24 cm 处，姿态与 L4 坐标系一致。
-  Eigen::Vector3d tool0_xyz_{0.0, 0.0, 0.0624};
-  // 默认姿态与 L4 坐标系一致，即 roll=0, pitch=0, yaw=0。
-  Eigen::Vector3d tool0_rpy_{Eigen::Vector3d::Zero()};
-
   std::array<double, kDof> effort_limits_{10.0, 10.0, 10.0, 10.0};
   std::array<double, kDof> kp_{20.0, 20.0, 15.0, 5.0};
   std::array<double, kDof> kd_{1.5, 1.5, 1.0, 0.25};

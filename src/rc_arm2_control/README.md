@@ -60,10 +60,9 @@ The payload is a cube attached at the face center:
 
 - `payload_mass`: default `0.2 kg`.
 - `payload_cube_side`: default `0.08 m`.
-- `tool0_xyz`: default `[0, 0, 0.0624]`, relative to `l4`.
-- `tool0_rpy`: default `[0, 0, 0]`.
+- `tool0_frame_name`: default `tool0`; this frame must exist in the URDF.
 
-Pinocchio keeps unloaded and loaded models. The loaded model appends the cube mass and inertia to `j4` at the configured `tool0` pose. MuJoCo keeps the cube as a free body and enables a weld constraint when `/arm2/payload_active` becomes true.
+Pinocchio keeps unloaded and loaded models. The loaded model reads the `tool0` frame from the URDF and appends the cube mass and inertia at `tool0 + payload_cube_side / 2` along `tool0` +Z. MuJoCo keeps the cube as a free body and enables a weld constraint to the URDF `tool0` body when `/arm2/payload_active` becomes true.
 
 ## Later MoveIt/OMPL Integration
 

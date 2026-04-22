@@ -1,0 +1,10 @@
+float64[3] target_xyz
+float64 target_spin
+bool execute
+---
+bool success
+int32 error_code
+string message
+---
+string state
+float64[4] q_goal

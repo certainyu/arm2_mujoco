@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="arm2">
+  <group name="arm">
+    <chain base_link="base_link" tip_link="tool0"/>
+  </group>
+
+  <virtual_joint name="fixed_base" type="fixed" parent_frame="world" child_link="base_link"/>
+
+  <disable_collisions link1="base_link" link2="l1" reason="Adjacent"/>
+  <disable_collisions link1="l1" link2="l2" reason="Adjacent"/>
+  <disable_collisions link1="l2" link2="l3" reason="Adjacent"/>
+  <disable_collisions link1="l3" link2="l4" reason="Adjacent"/>
+  <disable_collisions link1="l4" link2="tool0" reason="Adjacent"/>
+</robot>
