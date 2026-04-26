@@ -10,7 +10,7 @@ MoveIt client utilities for arm2.
 target = [tool0_x, tool0_y, tool0_z, tool0_spin]
 ```
 
-`target_xyz` is expressed in `base_link`, in meters. `target_spin` is the rotation of `tool0` around its own `+Z` axis, in radians.
+`target_xyz` is expressed in `base_link`, in meters. `target_spin` is the rotation of `tool0` around its own `+Z` axis, in radians. `planning_time` is the MoveIt planning time for this goal, in seconds; use `0.0` to keep the node default.
 
 `arm2_plan_to_task_goal` is a persistent action server. Start it once:
 
@@ -22,20 +22,20 @@ Then send as many goals as needed:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, execute: true}"
+  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: true}"
 ```
 
 Planning only:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, execute: false}"
+  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: false}"
 ```
 
 The action interface is:
 
 ```text
-Goal:   target_xyz[3], target_spin, execute
+Goal:   target_xyz[3], target_spin, planning_time, execute
 Result: success, error_code, message
 Feedback: state, q_goal[4]
 ```

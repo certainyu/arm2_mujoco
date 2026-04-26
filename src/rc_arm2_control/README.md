@@ -28,7 +28,8 @@ ros2 launch rc_arm2_control arm2_sim_control.launch.py enable_viewer:=false
 
 Nodes and interfaces:
 
-- `arm2_mujoco_sim.py` subscribes `/arm2/command/effort` and publishes `/joint_states`.
+- `arm2_mujoco_sim.py` subscribes `/arm2/command/effort` as `sensor_msgs/JointState` and publishes `/joint_states`.
+- Command `JointState` fields are `position=qd`, `velocity=dqd`, and `effort=tau_ff`.
 - `arm2_torque_trajectory_controller` exposes `/arm2_controller/follow_joint_trajectory`.
 - Publish `/arm2/payload_attached` as `std_msgs/Bool` to request unloaded/loaded switching.
 - The controller publishes `/arm2/payload_active` only when the dynamic model has actually switched; the simulator listens to that by default so execution-time payload requests are delayed until `HOLDING`.
@@ -49,9 +50,10 @@ ros2 topic pub --once /arm2/payload_attached std_msgs/msg/Bool "{data: false}"
 ## Controller Behavior
 
 - Control rate: `250 Hz`.
-- Control law: `tau = rnea(qd, dqd, ddqd) + Kp * (qd - q) + Kd * (dqd - dq)`.
+- Controller command: `tau_ff = rnea(qd, dqd, ddqd)`.
+- Simulator control law: `tau = tau_ff + Kp * (qd - q) + Kd * (dqd - dq)`.
 - Required trajectory fields: position, velocity, and acceleration for `j1,j2,j3,j4`.
-- Saturation policy: command is clamped to effort limits; continuous saturation for `saturation_abort_sec` aborts the active trajectory.
+- Saturation policy: `tau_ff` and simulator output torque are clamped to effort limits; continuous `tau_ff` saturation for `saturation_abort_sec` aborts the active trajectory.
 - `STARTUP` is initialization only. The node enters `HOLDING` after loading parameters, Pinocchio models, publishers, subscribers, and action server.
 
 ## Payload Model

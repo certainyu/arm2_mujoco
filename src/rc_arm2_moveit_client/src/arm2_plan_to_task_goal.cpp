@@ -241,6 +241,7 @@ private:
    *
    * @param target_xyz 目标 tool0 位置，单位 m，坐标系为 base_link，长度必须为 3。
    * @param target_spin 目标 tool0 绕自身 +Z 轴的自转角，单位 rad。
+   * @param requested_planning_time 本次 action goal 指定的 MoveIt 规划时间，单位 s；小于等于 0 时使用节点默认 planning_time。
    * @param execute true 表示规划成功后执行轨迹；false 表示只规划不执行。
    * @param feedback 可选 action feedback 指针；非空时会发布求得的 q_goal 和当前阶段文字。
    * @return PlanOutcome 包含是否成功、错误码和描述信息。
@@ -248,12 +249,19 @@ private:
   PlanOutcome plan_and_execute(
     const std::vector<double> & target_xyz,
     double target_spin,
+    double requested_planning_time,
     bool execute,
     const std::shared_ptr<PlanToTaskGoal::Feedback> & feedback)
   {
     if (target_xyz.size() != 3) {
       return {false, 1, "target_xyz must contain exactly 3 values"};
     }
+    if (!std::isfinite(requested_planning_time)) {
+      return {false, 1, "planning_time must be finite"};
+    }
+
+    const double active_planning_time =
+      requested_planning_time > 0.0 ? requested_planning_time : planning_time_;
 
     const Eigen::Vector4d target_task(target_xyz[0], target_xyz[1], target_xyz[2], target_spin);
     const auto seed = current_joint_seed();
@@ -273,11 +281,12 @@ private:
     }
     RCLCPP_INFO(
       node_->get_logger(),
-      "IK q_goal=[%.4f %.4f %.4f %.4f]",
-      q_goal[0], q_goal[1], q_goal[2], q_goal[3]);
+      "IK q_goal=[%.4f %.4f %.4f %.4f], planning_time=%.3f s",
+      q_goal[0], q_goal[1], q_goal[2], q_goal[3], active_planning_time);
     publish_feedback(feedback, "IK solved", q_goal);
 
     move_group_->setStartStateToCurrentState();
+    move_group_->setPlanningTime(active_planning_time);
     if (!move_group_->setJointValueTarget(joint_target)) {
       RCLCPP_ERROR(node_->get_logger(), "MoveIt rejected joint target");
       return {false, 3, "MoveIt rejected joint target"};
@@ -359,9 +368,9 @@ private:
     }
     RCLCPP_INFO(
       node_->get_logger(),
-      "Accepted task goal target_xyz=[%.4f %.4f %.4f], target_spin=%.4f, execute=%s",
+      "Accepted task goal target_xyz=[%.4f %.4f %.4f], target_spin=%.4f, planning_time=%.3f, execute=%s",
       goal->target_xyz[0], goal->target_xyz[1], goal->target_xyz[2], goal->target_spin,
-      goal->execute ? "true" : "false");
+      goal->planning_time, goal->execute ? "true" : "false");
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
 
@@ -418,7 +427,12 @@ private:
       publish_feedback(feedback, "accepted", Eigen::VectorXd::Zero(model_.nq));
       goal_handle->publish_feedback(feedback);
 
-      const auto outcome = plan_and_execute(target_xyz, goal->target_spin, goal->execute, feedback);
+      const auto outcome = plan_and_execute(
+        target_xyz,
+        goal->target_spin,
+        goal->planning_time,
+        goal->execute,
+        feedback);
       result->success = outcome.success;
       result->error_code = outcome.error_code;
       result->message = outcome.message;

@@ -94,24 +94,30 @@ source install/setup.bash
 
 ## Start The System
 
-Recommended bringup:
+Recommended sim bringup:
 
 ```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch rc_arm2_bringup arm2_full_system.launch.py
+ros2 launch rc_arm2_bringup arm2_sim_system.launch.py
 ```
 
-Headless:
+Real hardware bringup:
 
 ```bash
-ros2 launch rc_arm2_bringup arm2_full_system.launch.py enable_viewer:=false
+ros2 launch rc_arm2_bringup arm2_real_system.launch.py
 ```
 
-With RViz:
+Headless sim:
 
 ```bash
-ros2 launch rc_arm2_bringup arm2_full_system.launch.py start_rviz:=true
+ros2 launch rc_arm2_bringup arm2_sim_system.launch.py enable_viewer:=false
+```
+
+Sim with RViz:
+
+```bash
+ros2 launch rc_arm2_bringup arm2_sim_system.launch.py start_rviz:=true
 ```
 
 Manual startup for debugging:
@@ -169,6 +175,7 @@ The supported task target is:
 ```text
 target_xyz:  tool0 position in base_link, meters
 target_spin: tool0 rotation around its own +Z axis, radians
+planning_time: MoveIt planning time for this goal, seconds; use 0.0 to keep the node default
 ```
 
 After `arm2_plan_to_task_goal` is running, send task goals with the `/arm2_task_goal` action.
@@ -177,21 +184,21 @@ Planning only:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, execute: false}"
+  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: false}"
 ```
 
 Plan and execute:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, execute: true}"
+  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: true}"
 ```
 
 You can send another goal after the previous one finishes:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.12, 0.02, 0.22], target_spin: 0.4, execute: true}"
+  "{target_xyz: [0.12, 0.02, 0.22], target_spin: 0.4, planning_time: 3.0, execute: true}"
 ```
 
 The client refuses to execute if the MoveIt trajectory does not contain positions, velocities, and accelerations, because the torque controller requires complete `q`, `dq`, and `ddq`.
@@ -264,7 +271,7 @@ Run MoveIt planning without execution:
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, execute: false}"
+  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: false}"
 ```
 
 ## Expected MoveIt Warnings

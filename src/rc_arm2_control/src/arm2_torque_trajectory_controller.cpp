@@ -26,7 +26,6 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "trajectory_msgs/msg/joint_trajectory_point.hpp"
 
@@ -131,7 +130,8 @@ public:
     // 后续会由moveit生成的action client连接到这个名字发送目标
     action_name_ = declare_parameter<std::string>(
       "action_name", "/arm2_controller/follow_joint_trajectory");
-    // 发布力矩命令的 topic，类型为 std_msgs::msg::Float64MultiArray，包含 4 个元素，对应 j1-j4 的力矩命令
+    // 发布 MIT 目标命令的 topic，类型为 sensor_msgs::msg::JointState：
+    // position=期望位置，velocity=期望速度，effort=期望前馈力矩。
     command_topic_ = declare_parameter<std::string>("command_topic", "/arm2/command/effort");
     // 订阅关节状态的 topic，类型为 sensor_msgs::msg::JointState，包含所有关节的状态，但只使用 j1-j4 的位置和速度
     joint_state_topic_ = declare_parameter<std::string>("joint_state_topic", "/joint_states");
@@ -163,6 +163,7 @@ public:
     payload_cube_side_ = declare_parameter<double>("payload_cube_side", 0.08);
 
     // 默认的 effort_limits、kp、kd 参数，如果用户没有在参数服务器提供这些参数，就使用这些默认值。
+    // kp/kd 仍作为参数声明以兼容现有 YAML；仿真节点会实际读取并用于 MIT 计算。
     const auto effort_defaults_limits = std::array<double, kDof>{10.0, 10.0, 10.0, 10.0};
     const auto kp_defaults = std::array<double, kDof>{20.0, 20.0, 15.0, 5.0};
     const auto kd_defaults = std::array<double, kDof>{1.5, 1.5, 1.0, 0.25};
@@ -192,9 +193,9 @@ public:
     load_dynamics_models(urdf_path);
 
     // 创建 ROS 发布者和订阅者，以及 FollowJointTrajectory action server。
-    // effort_pub_ 发布关节力矩命令
+    // effort_pub_ 发布关节 MIT 目标命令
     // "/arm2/command/effort"
-    effort_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(command_topic_, 10);
+    effort_pub_ = create_publisher<sensor_msgs::msg::JointState>(command_topic_, 10);
     // state_pub_ 发布控制器状态
     // "/arm2_controller/state"
     state_pub_ = create_publisher<std_msgs::msg::String>(state_topic_, 10);
@@ -612,14 +613,14 @@ private:
       }
       const double elapsed = (now() - trajectory_start_time_).seconds();
       target = sample_trajectory(elapsed);
-      // 根据目标点和当前实际关节状态，计算力矩并发布到：/arm2/command/effort
+      // 根据目标点计算前馈力矩，并以 JointState 发布 MIT 目标命令到：/arm2/command/effort
       const bool command_ok = compute_and_publish_torque(target);
       // 向 action client 发布反馈，告诉它当前 desired、actual、error。
       publish_feedback_locked(target);
       if (!command_ok) {
         finish_abort_locked(
           control_msgs::action::FollowJointTrajectory_Result::PATH_TOLERANCE_VIOLATED,
-          "torque saturation exceeded allowed duration");
+          "feedforward torque saturation exceeded allowed duration");
         return;
       }
 
@@ -704,15 +705,15 @@ private:
   }
 
   /**
-   * @brief 计算并发布当前目标点对应的关节力矩。
+   * @brief 计算并发布当前目标点对应的 MIT 目标命令。
    *
    * @param target 当前控制周期的目标 q、dq、ddq。
-   * @return bool true 表示力矩计算和发布正常；false 表示出现非有限值
-   * 或连续力矩饱和时间超过阈值。
+   * @return bool true 表示前馈力矩计算和发布正常；false 表示出现非有限值
+   * 或连续前馈力矩饱和时间超过阈值。
    *
-   * 控制律为：
-   * tau = RNEA(qd, dqd, ddqd) + Kp * (qd - q) + Kd * (dqd - dq)。
-   * 随后对每个关节做 effort limit 限幅。
+   * 这里只计算前馈力矩 tau_ff = RNEA(qd, dqd, ddqd)，并通过 JointState 发布：
+   * name=joint_names，position=qd，velocity=dqd，effort=tau_ff。
+   * MIT 的 Kp/Kd 误差反馈在 MuJoCo 仿真节点中完成。
    */
   bool compute_and_publish_torque(const TargetSample & target)
   {
@@ -734,14 +735,11 @@ private:
     std::array<double, kDof> command{};
     bool saturated = false;
     for (std::size_t i = 0; i < kDof; ++i) {
-      double tau = 0.0;
-      tau += feedforward[v_indices_[i]];
-      tau += kp_[i] * (target.q[i] - current_q_[i]);
-      tau += kd_[i] * (target.dq[i] - current_dq_[i]);
+      double tau = feedforward[v_indices_[i]];
 
       if (!std::isfinite(tau)) {
         state_ = State::FAULT;
-        publish_state("non-finite torque");
+        publish_state("non-finite feedforward torque");
         return false;
       }
 
@@ -756,8 +754,12 @@ private:
       command[i] = tau;
     }
 
-    std_msgs::msg::Float64MultiArray msg;
-    msg.data.assign(command.begin(), command.end());
+    sensor_msgs::msg::JointState msg;
+    msg.header.stamp = now();
+    msg.name = joint_names_;
+    msg.position.assign(target.q.begin(), target.q.end());
+    msg.velocity.assign(target.dq.begin(), target.dq.end());
+    msg.effort.assign(command.begin(), command.end());
     effort_pub_->publish(msg);
 
     if (saturated) {
@@ -1047,9 +1049,10 @@ private:
   // 当前正在执行的 action 目标句柄；如果没有正在执行的目标，则为 nullptr。
   std::shared_ptr<GoalHandleFollowJointTrajectory> active_goal_;
 
-  // 发布力矩命令的 publisher，发布到 command_topic_，
-  // 消息类型为 std_msgs::msg::Float64MultiArray，包含 4 个元素，对应 j1-j4 的力矩命令。
-  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr effort_pub_;
+  // 发布 MIT 目标命令的 publisher，发布到 command_topic_，
+  // 消息类型为 sensor_msgs::msg::JointState：
+  // name=关节名，position=期望位置，velocity=期望速度，effort=期望前馈力矩。
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr effort_pub_;
   // 发布当前负载状态的 publisher，发布到 payload_active_topic_，消息类型为 std_msgs::msg::Bool。
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr payload_active_pub_;
   // 发布控制器状态的 publisher，发布到 state_topic_，消息类型为 std_msgs::msg::String。

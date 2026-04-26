@@ -1,7 +1,8 @@
 arm2_torque_trajectory_controller:
   ros__parameters:
     action_name: /arm2_controller/follow_joint_trajectory
-    # effort_pub_ 发布关节力矩命令
+    # effort_pub_ 发布 JointState MIT 目标命令：
+    # position=期望位置，velocity=期望速度，effort=期望前馈力矩。
     command_topic: /arm2/command/effort
     # joint_state_sub_ 订阅关节状态
     joint_state_topic: /joint_states
@@ -18,14 +19,14 @@ arm2_torque_trajectory_controller:
     joint_names: [j1, j2, j3, j4]
     # 每个关节的力矩限制，kp, kd
     effort_limits: [10.0, 10.0, 10.0, 10.0]
-    kp: [12.0, 25.0, 25.0, 3.0]
-    kd: [1.0, 2.0, 2.0, 0.03]
+    kp: [5.0, 20.0, 10.0, 1.0]
+    kd: [0.5, 0.95, 0.5, 0.03]
     # 如果连续的力矩饱和时间超过 saturation_abort_sec_，则认为执行失败并进入 FAULT 状态。
     saturation_abort_sec: 0.25
     # 执行轨迹时，如果最终位置与目标位置的误差小于 goal_tolerance_rad_，
     # 且持续时间超过 settle_time_sec_，则认为执行成功并进入 HOLDING 状态。
     goal_tolerance_rad: 0.02
-    settle_time_sec: 1.0
+    settle_time_sec: 0.5
     # 负载相关参数。tool0_frame_name 必须存在于 URDF 中；
     # 正方体质心位于 tool0 的 +Z 方向 payload_cube_side / 2。
     tool0_frame_name: tool0
@@ -35,16 +36,7 @@ arm2_torque_trajectory_controller:
 
 arm2_mujoco_sim:
   ros__parameters:
-    command_topic: /arm2/command/effort
-    joint_state_topic: /joint_states
-    payload_command_topic: /arm2/payload_attached
-    payload_active_topic: /arm2/payload_active
     sync_payload_with_controller: true
     enable_viewer: true
     timestep: 0.001
     joint_state_rate_hz: 250.0
-    joint_names: [j1, j2, j3, j4]
-    effort_limits: [10.0, 10.0, 10.0, 10.0]
-    payload_mass: 0.2
-    payload_cube_side: 0.08
-    tool0_frame_name: tool0

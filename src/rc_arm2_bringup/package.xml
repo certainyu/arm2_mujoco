@@ -9,6 +9,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>arm2_moveit_config</exec_depend>
+  <exec_depend>dmbot_serial</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rc_arm2_control</exec_depend>

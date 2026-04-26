@@ -1,5 +1,6 @@
 float64[3] target_xyz
 float64 target_spin
+float64 planning_time
 bool execute
 ---
 bool success

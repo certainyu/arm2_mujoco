@@ -18,7 +18,7 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Bool, Float64MultiArray
+from std_msgs.msg import Bool
 
 
 def parse_vec(text: Optional[str], default: Iterable[float]) -> List[float]:
@@ -158,6 +158,14 @@ class Arm2MujocoSim(Node):
             list(self.declare_parameter("effort_limits", [10.0, 10.0, 10.0, 10.0]).value),
             dtype=float,
         )
+        self.kp = np.array(
+            list(self.declare_parameter("kp", [20.0, 20.0, 15.0, 5.0]).value),
+            dtype=float,
+        )
+        self.kd = np.array(
+            list(self.declare_parameter("kd", [1.5, 1.5, 1.0, 0.25]).value),
+            dtype=float,
+        )
         self.payload_mass = float(self.declare_parameter("payload_mass", 0.2).value)
         self.payload_cube_side = float(self.declare_parameter("payload_cube_side", 0.08).value)
         self.tool0_frame_name = self.declare_parameter("tool0_frame_name", "tool0").value
@@ -171,6 +179,10 @@ class Arm2MujocoSim(Node):
             raise RuntimeError("joint_names must contain exactly 4 names")
         if len(self.effort_limits) != 4:
             raise RuntimeError("effort_limits must contain exactly 4 values")
+        if len(self.kp) != 4:
+            raise RuntimeError("kp must contain exactly 4 values")
+        if len(self.kd) != 4:
+            raise RuntimeError("kd must contain exactly 4 values")
 
         mjcf_path = self._write_mjcf()
         self.model = mujoco.MjModel.from_xml_path(str(mjcf_path))
@@ -208,7 +220,7 @@ class Arm2MujocoSim(Node):
             self.data.eq_active[self.payload_weld_id] = 0
 
         self.joint_state_pub = self.create_publisher(JointState, self.joint_state_topic, 20)
-        self.create_subscription(Float64MultiArray, self.command_topic, self._effort_callback, 20)
+        self.create_subscription(JointState, self.command_topic, self._effort_callback, 20)
         self.create_subscription(Bool, self.payload_command_topic, self._payload_command_callback, 10)
         self.create_subscription(Bool, self.payload_active_topic, self._payload_active_callback, 10)
 
@@ -220,12 +232,61 @@ class Arm2MujocoSim(Node):
             f"viewer={'enabled' if self.enable_viewer else 'disabled'}"
         )
 
-    def _effort_callback(self, msg: Float64MultiArray) -> None:
-        if len(msg.data) < 4:
-            self.get_logger().warn("Ignoring effort command with fewer than 4 values")
+    def _effort_callback(self, msg: JointState) -> None:
+        command = self._read_command_joint_state(msg)
+        if command is None:
             return
-        values = np.array(msg.data[:4], dtype=float)
+
+        target_q, target_dq, target_tau = command
+        current_q = np.array([float(self.data.qpos[adr]) for adr in self.qpos_adr], dtype=float)
+        current_dq = np.array([float(self.data.qvel[adr]) for adr in self.qvel_adr], dtype=float)
+        values = target_tau + self.kp * (target_q - current_q) + self.kd * (target_dq - current_dq)
+        if not np.all(np.isfinite(values)):
+            self.get_logger().warn("Ignoring MIT command that produced non-finite torque")
+            return
         self.ctrl = np.clip(values, -self.effort_limits, self.effort_limits)
+
+    def _read_command_joint_state(
+        self,
+        msg: JointState,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        if len(msg.position) < 4 or len(msg.velocity) < 4 or len(msg.effort) < 4:
+            self.get_logger().warn(
+                "Ignoring JointState command without 4 position, velocity, and effort values"
+            )
+            return None
+
+        if not msg.name:
+            indices = list(range(4))
+        else:
+            command_index = {name: index for index, name in enumerate(msg.name)}
+            try:
+                indices = [command_index[name] for name in self.joint_names]
+            except KeyError as error:
+                self.get_logger().warn(f"Ignoring JointState command missing joint {error.args[0]}")
+                return None
+            if any(
+                index >= len(msg.position) or
+                index >= len(msg.velocity) or
+                index >= len(msg.effort)
+                for index in indices
+            ):
+                self.get_logger().warn(
+                    "Ignoring JointState command whose arrays do not match named joints"
+                )
+                return None
+
+        target_q = np.array([float(msg.position[index]) for index in indices], dtype=float)
+        target_dq = np.array([float(msg.velocity[index]) for index in indices], dtype=float)
+        target_tau = np.array([float(msg.effort[index]) for index in indices], dtype=float)
+        if not (
+            np.all(np.isfinite(target_q)) and
+            np.all(np.isfinite(target_dq)) and
+            np.all(np.isfinite(target_tau))
+        ):
+            self.get_logger().warn("Ignoring JointState command with non-finite values")
+            return None
+        return target_q, target_dq, target_tau
 
     def _payload_command_callback(self, msg: Bool) -> None:
         self.requested_payload_attached = bool(msg.data)

@@ -3,3 +3,4 @@ install/
 log/
 
 .codex
+__pycache__
