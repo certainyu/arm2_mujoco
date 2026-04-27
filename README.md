@@ -94,9 +94,20 @@ source install/setup.bash
 
 ## Start The System
 
+If your LAN contains other ROS 2 machines publishing the same topic names such as `/joint_states`, run this workspace in localhost-only mode so discovery and traffic stay on the current machine:
+
+```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
+```
+
+Use the same two environment variables in every terminal before launching nodes or using `ros2 topic/ros2 action` commands.
+
 Recommended sim bringup:
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_sim_system.launch.py
@@ -105,18 +116,30 @@ ros2 launch rc_arm2_bringup arm2_sim_system.launch.py
 Real hardware bringup:
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_real_system.launch.py
 ```
 
 Headless sim:
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_sim_system.launch.py enable_viewer:=false
 ```
 
 Sim with RViz:
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_sim_system.launch.py start_rviz:=true
 ```
 
@@ -125,6 +148,8 @@ Manual startup for debugging:
 Terminal 1: start MuJoCo simulation and the custom torque controller.
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch rc_arm2_control arm2_sim_control.launch.py
@@ -133,12 +158,18 @@ ros2 launch rc_arm2_control arm2_sim_control.launch.py
 For headless checks without the MuJoCo viewer:
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch rc_arm2_control arm2_sim_control.launch.py enable_viewer:=false
 ```
 
 Terminal 2: start MoveIt.
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch arm2_moveit_config move_group.launch.py
@@ -147,6 +178,8 @@ ros2 launch arm2_moveit_config move_group.launch.py
 Terminal 3: start the persistent 4D task goal action server.
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 run rc_arm2_moveit_client arm2_plan_to_task_goal
@@ -155,6 +188,8 @@ ros2 run rc_arm2_moveit_client arm2_plan_to_task_goal
 Terminal 4: synchronize payload collision geometry into the MoveIt planning scene.
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 run rc_arm2_moveit_client arm2_payload_scene_sync
@@ -163,6 +198,8 @@ ros2 run rc_arm2_moveit_client arm2_payload_scene_sync
 Optional: start RViz.
 
 ```bash
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch arm2_moveit_config moveit_rviz.launch.py
