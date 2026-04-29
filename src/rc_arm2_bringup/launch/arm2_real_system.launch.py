@@ -21,9 +21,12 @@ def _control_config_path() -> Path:
 def _usb2canfd_params_from_controller() -> dict:
     config = yaml.safe_load(_control_config_path().read_text())
     controller_params = config["arm2_torque_trajectory_controller"]["ros__parameters"]
+    real_params = config["arm2_mujoco_real"]["ros__parameters"]
     return {
         "command_topic": controller_params["command_topic"],
         "joint_state_topic": controller_params["joint_state_topic"],
+        "joint_names": controller_params["joint_names"],
+        "joint_directions": real_params["joint_directions"],
         "kp": controller_params["kp"],
         "kd": controller_params["kd"],
     }

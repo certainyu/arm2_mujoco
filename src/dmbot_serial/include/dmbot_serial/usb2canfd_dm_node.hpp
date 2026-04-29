@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -27,6 +28,8 @@ private:
   std::vector<uint16_t> motor_ids_;
   std::unordered_map<uint16_t, std::size_t> motor_id_to_index_;
   std::size_t motor_count_{0};
+  std::vector<std::string> joint_names_;
+  std::vector<float> joint_directions_;
   std::vector<float> kp_arr_;
   std::vector<float> kd_arr_;
 

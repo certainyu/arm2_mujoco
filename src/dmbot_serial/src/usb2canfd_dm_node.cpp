@@ -27,6 +27,27 @@ std::vector<float> to_float_vector(
   }
   return out;
 }
+
+std::vector<float> to_direction_vector(
+  const std::vector<int64_t> & values,
+  std::size_t expected_size,
+  const std::string & name)
+{
+  if (values.size() != expected_size) {
+    throw std::runtime_error(
+            name + " must contain exactly " + std::to_string(expected_size) + " values");
+  }
+
+  std::vector<float> out;
+  out.reserve(values.size());
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (values[i] == 0) {
+      throw std::runtime_error(name + "[" + std::to_string(i) + "] must be either positive or negative");
+    }
+    out.push_back(values[i] > 0 ? 1.0F : -1.0F);
+  }
+  return out;
+}
 }  // namespace
 
 Usb2canfdDMNode::Usb2canfdDMNode()
@@ -44,6 +65,8 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   this->declare_parameter<int64_t>("control_mode", 0);
   this->declare_parameter<std::string>("command_topic", "/arm2/command/effort");
   this->declare_parameter<std::string>("joint_state_topic", "/joint_states");
+  this->declare_parameter<std::vector<std::string>>("joint_names", std::vector<std::string>{"j1", "j2", "j3", "j4"});
+  this->declare_parameter<std::vector<int64_t>>("joint_directions", std::vector<int64_t>{1, 1, 1, 1});
   this->declare_parameter<std::vector<double>>("kp", std::vector<double>{10.0, 15.0, 15.0, 1.0});
   this->declare_parameter<std::vector<double>>("kd", std::vector<double>{0.5, 0.95, 0.95, 0.03});
 
@@ -58,6 +81,8 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   const auto control_mode_value = static_cast<int>(this->get_parameter("control_mode").as_int());
   const auto kp_param = this->get_parameter("kp").as_double_array();
   const auto kd_param = this->get_parameter("kd").as_double_array();
+  const auto joint_names_param = this->get_parameter("joint_names").as_string_array();
+  const auto joint_directions_param = this->get_parameter("joint_directions").as_integer_array();
 
   switch (control_mode_value) {
     case 0:
@@ -116,12 +141,24 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   }
 
   motor_count_ = motor_ids_.size();
+  joint_names_ = joint_names_param;
+  if (joint_names_.size() != motor_count_) {
+    throw std::runtime_error(
+            "joint_names must contain exactly " + std::to_string(motor_count_) + " values");
+  }
+  joint_directions_ = to_direction_vector(joint_directions_param, motor_count_, "joint_directions");
   kp_arr_ = to_float_vector(kp_param, motor_count_, "kp");
   kd_arr_ = to_float_vector(kd_param, motor_count_, "kd");
-  
+
+  std::ostringstream direction_ss;
+  direction_ss << "Joint mapping:";
+  for (std::size_t i = 0; i < motor_count_; ++i) {
+    direction_ss << " [" << joint_names_[i] << " dir=" << joint_directions_[i] << "]";
+  }
+  RCLCPP_INFO(this->get_logger(), "%s", direction_ss.str().c_str());
 
   auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
-  
+
   command_subscriber_ = this->create_subscription<sensor_msgs::msg::JointState>(
     command_topic, qos,
     std::bind(&Usb2canfdDMNode::command_callback, this, std::placeholders::_1));
@@ -159,13 +196,39 @@ void Usb2canfdDMNode::command_callback(const sensor_msgs::msg::JointState::Share
       return;
     }
 
+    std::vector<std::size_t> command_indices(motor_count_);
+    if (!msg->name.empty()) {
+      std::unordered_map<std::string, std::size_t> command_index;
+      for (std::size_t i = 0; i < msg->name.size(); ++i) {
+        command_index[msg->name[i]] = i;
+      }
+
+      for (std::size_t i = 0; i < motor_count_; ++i) {
+        const auto it = command_index.find(joint_names_[i]);
+        if (it == command_index.end()) {
+          RCLCPP_WARN(
+            this->get_logger(),
+            "Command is missing joint '%s'; skipping command",
+            joint_names_[i].c_str());
+          return;
+        }
+        command_indices[i] = it->second;
+      }
+    } else {
+      for (std::size_t i = 0; i < motor_count_; ++i) {
+        command_indices[i] = i;
+      }
+    }
+
     std::vector<float> q_arr(motor_count_);
     std::vector<float> dq_arr(motor_count_);
     std::vector<float> tau_arr(motor_count_);
     for (std::size_t i = 0; i < motor_count_; ++i) {
-      q_arr[i] = static_cast<float>(msg->position[i]);
-      dq_arr[i] = static_cast<float>(msg->velocity[i]);
-      tau_arr[i] = static_cast<float>(msg->effort[i]);
+      const auto src_index = command_indices[i];
+      const auto direction = joint_directions_[i];
+      q_arr[i] = direction * static_cast<float>(msg->position[src_index]);
+      dq_arr[i] = direction * static_cast<float>(msg->velocity[src_index]);
+      tau_arr[i] = direction * static_cast<float>(msg->effort[src_index]);
     }
 
     // 打印发送的数组
@@ -219,10 +282,11 @@ void Usb2canfdDMNode::publish_joint_state()
     joint_state_msg.effort.reserve(motor_count_);
 
     for (std::size_t i = 0; i < motor_count_; ++i) {
-      joint_state_msg.name.push_back("joint_" + std::to_string(i));
-      joint_state_msg.position.push_back(motor_control_->current_motor_pos[i]);
-      joint_state_msg.velocity.push_back(motor_control_->current_motor_vel[i]);
-      joint_state_msg.effort.push_back(motor_control_->current_motor_tor[i]);
+      const auto direction = joint_directions_[i];
+      joint_state_msg.name.push_back(joint_names_[i]);
+      joint_state_msg.position.push_back(direction * motor_control_->current_motor_pos[i]);
+      joint_state_msg.velocity.push_back(direction * motor_control_->current_motor_vel[i]);
+      joint_state_msg.effort.push_back(direction * motor_control_->current_motor_tor[i]);
     }
 
     joint_state_publisher_->publish(joint_state_msg);

@@ -34,6 +34,11 @@ arm2_torque_trajectory_controller:
     payload_mass: 0.2
     payload_cube_side: 0.08
 
+arm2_mujoco_real:
+  ros__parameters:
+    # 与 URDF 正方向一致的关节方向系数；真机中 j2、j4 需要取反。
+    joint_directions: [1, -1, 1, -1]
+
 arm2_mujoco_sim:
   ros__parameters:
     sync_payload_with_controller: true
