@@ -348,7 +348,7 @@ private:
 
     const pinocchio::SE3 cube_center_from_tool(
       Eigen::Matrix3d::Identity(),
-      Eigen::Vector3d(0.0, 0.0, side * 0.5));
+      Eigen::Vector3d(0.0, -side * 0.5, 0.0));
       
     loaded_model_.appendBodyToJoint(
       payload_joint_id,

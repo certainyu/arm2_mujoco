@@ -246,7 +246,7 @@
     name="tool0_fixed"
     type="fixed">
     <origin
-      xyz="0 0 0.0624"
+      xyz="0.01 -0.04 0.03"
       rpy="0 0 0" />
     <parent link="l4" />
     <child link="tool0" />

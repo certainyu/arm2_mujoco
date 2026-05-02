@@ -237,6 +237,7 @@ void Usb2canfdDMNode::command_callback(const sensor_msgs::msg::JointState::Share
     }
 
     // 打印发送的数组
+    /*
     std::ostringstream ss;
     ss << "Cmd arrays: q=[";
     for (std::size_t i = 0; i < motor_count_; ++i) {
@@ -265,11 +266,11 @@ void Usb2canfdDMNode::command_callback(const sensor_msgs::msg::JointState::Share
     }
     ss << "]";
     RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
-
+    */
     motor_control_->CtrlMotors(
       q_arr.data(), dq_arr.data(), kp_arr_.data(), kd_arr_.data(), tau_arr.data());
 
-    RCLCPP_INFO(this->get_logger(), "Motor commands sent successfully");
+    //RCLCPP_INFO(this->get_logger(), "Motor commands sent successfully");
   } catch (const std::exception & e) {
     RCLCPP_ERROR(this->get_logger(), "Unexpected error in command_callback: %s", e.what());
   }

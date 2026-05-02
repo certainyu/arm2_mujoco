@@ -70,7 +70,7 @@ private:
 
     geometry_msgs::msg::Pose pose;
     pose.orientation.w = 1.0;
-    pose.position.z = payload_cube_side_ * 0.5;
+    pose.position.y = -payload_cube_side_ * 0.5;
 
     attached.object.primitives.push_back(cube);
     attached.object.primitive_poses.push_back(pose);

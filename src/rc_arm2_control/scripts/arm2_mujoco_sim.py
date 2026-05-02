@@ -170,7 +170,7 @@ class Arm2MujocoSim(Node):
         self.payload_cube_side = float(self.declare_parameter("payload_cube_side", 0.08).value)
         self.tool0_frame_name = self.declare_parameter("tool0_frame_name", "tool0").value
         self.payload_center_from_tool = np.array(
-            [0.0, 0.0, self.payload_cube_side * 0.5],
+            [0.0, -self.payload_cube_side * 0.5, 0.0],
             dtype=float,
         )
         self.identity_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
