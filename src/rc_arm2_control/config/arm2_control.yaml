@@ -13,13 +13,13 @@ arm2_torque_trajectory_controller:
     # state_pub_ 发布控制器状态
     state_topic: /arm2_controller/state
     # 控制周期频率，单位 Hz，默认 250 Hz
-    control_rate_hz: 250.0
+    control_rate_hz: 500.0
     # 每秒向 FollowJointTrajectory action client 反馈 20 次状态，避免 feedback 消息太频繁。
     feedback_rate_hz: 20.0
     joint_names: [j1, j2, j3, j4]
     # 每个关节的力矩限制，kp, kd
     effort_limits: [10.0, 10.0, 10.0, 10.0]
-    kp: [5.0, 20.0, 10.0, 1.0]
+    kp: [5.0, 20.0, 10.0, 5.0]
     kd: [0.5, 0.95, 0.5, 0.03]
     # 如果连续的力矩饱和时间超过 saturation_abort_sec_，则认为执行失败并进入 FAULT 状态。
     saturation_abort_sec: 0.25
@@ -31,8 +31,8 @@ arm2_torque_trajectory_controller:
     # 正方体质心位于 tool0 的 +Z 方向 payload_cube_side / 2。
     tool0_frame_name: tool0
     # 默认负载质量 0.2 kg，边长 0.08 m，用户可以根据实际负载调整这两个参数以获得更准确的动力学补偿。
-    payload_mass: 0.2
-    payload_cube_side: 0.08
+    payload_mass: 0.7
+    payload_cube_side: 0.35
 
 arm2_mujoco_real:
   ros__parameters:
@@ -45,4 +45,4 @@ arm2_mujoco_sim:
     sync_payload_with_controller: true
     enable_viewer: true
     timestep: 0.001
-    joint_state_rate_hz: 250.0
+    joint_state_rate_hz: 500.0

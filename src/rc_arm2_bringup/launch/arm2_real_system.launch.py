@@ -96,6 +96,7 @@ def generate_launch_description():
             executable="arm2_payload_scene_sync",
             name="arm2_payload_scene_sync",
             output="screen",
+            parameters=[control_config],
             condition=IfCondition(start_payload_scene_sync),
         ),
         IncludeLaunchDescription(

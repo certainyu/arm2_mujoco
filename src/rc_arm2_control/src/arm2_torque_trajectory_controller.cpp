@@ -317,8 +317,8 @@ private:
    * @brief 在 loaded_model_ 上追加正方体负载惯量。
    *
    * 正方体通过吸盘吸附在一个面的面心，因此质心位于 tool0 坐标系
-   * +Z 方向 payload_cube_side / 2 的位置。惯量使用立方体质心惯量
-   * Ixx = Iyy = Izz = (1/6) * m * a^2。
+   * +Z 方向 payload_cube_side / 2 的位置。惯量按薄壁正方体表面均匀分布计算，
+   * 忽略厚度时 Ixx = Iyy = Izz = (5/18) * m * a^2。
    *
    * @throw std::runtime_error 当 URDF 中不存在 tool0 frame、负载质量非法、
    * 或正方体边长非法时抛出。
@@ -337,7 +337,9 @@ private:
     }
 
     const double side = payload_cube_side_;
-    const double inertia_diag = (1.0 / 6.0) * payload_mass_ * side * side;
+    // 薄壁正方体表面均匀分布、厚度可忽略时，三主惯量相同：
+    // Ixx = Iyy = Izz = (5/18) * m * a^2。
+    const double inertia_diag = (5.0 / 18.0) * payload_mass_ * side * side;
     const Eigen::Matrix3d inertia_com = Eigen::Matrix3d::Identity() * inertia_diag;
     const pinocchio::Inertia payload_inertia(payload_mass_, Eigen::Vector3d::Zero(), inertia_com);
 

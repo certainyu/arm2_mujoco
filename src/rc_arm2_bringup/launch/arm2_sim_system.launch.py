@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
@@ -9,7 +12,12 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
+def _control_config_path() -> Path:
+    return Path(get_package_share_directory("rc_arm2_control")) / "config" / "arm2_control.yaml"
+
+
 def generate_launch_description():
+    control_config = str(_control_config_path())
     enable_viewer = LaunchConfiguration("enable_viewer")
     start_moveit = LaunchConfiguration("start_moveit")
     start_task_goal_server = LaunchConfiguration("start_task_goal_server")
@@ -78,6 +86,7 @@ def generate_launch_description():
             executable="arm2_payload_scene_sync",
             name="arm2_payload_scene_sync",
             output="screen",
+            parameters=[control_config],
             condition=IfCondition(start_payload_scene_sync),
         ),
         IncludeLaunchDescription(

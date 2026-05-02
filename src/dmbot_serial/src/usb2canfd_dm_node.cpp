@@ -172,7 +172,7 @@ Usb2canfdDMNode::Usb2canfdDMNode()
     this->create_publisher<sensor_msgs::msg::JointState>(joint_state_topic, 10);
 
   timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(10), std::bind(&Usb2canfdDMNode::publish_joint_state, this));
+    std::chrono::milliseconds(2), std::bind(&Usb2canfdDMNode::publish_joint_state, this));
 
   RCLCPP_INFO(
     this->get_logger(),

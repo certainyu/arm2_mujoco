@@ -572,10 +572,7 @@ def main() -> None:
         if node.enable_viewer:
             os.environ.setdefault("MUJOCO_GL", "glfw")
             with mujoco.viewer.launch_passive(node.model, node.data) as viewer:
-                viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
-                viewer.cam.fixedcamid = mujoco.mj_name2id(
-                    node.model, mujoco.mjtObj.mjOBJ_CAMERA, "overview"
-                )
+                viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
                 node.get_logger().info("MuJoCo viewer window opened")
                 run_loop(viewer)
         else:
