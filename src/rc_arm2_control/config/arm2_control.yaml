@@ -37,7 +37,8 @@ arm2_torque_trajectory_controller:
 arm2_mujoco_real:
   ros__parameters:
     # 与 URDF 正方向一致的关节方向系数；真机中 j2、j4 需要取反。
-    joint_directions: [1, -1, 1, -1]
+    joint_directions: [1, 1, 1, -1]
+    vacuum_activate_topic: /arm2/vacuum_activate
 
 arm2_mujoco_sim:
   ros__parameters:

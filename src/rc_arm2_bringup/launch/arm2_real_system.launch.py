@@ -27,6 +27,7 @@ def _usb2canfd_params_from_controller() -> dict:
         "joint_state_topic": controller_params["joint_state_topic"],
         "joint_names": controller_params["joint_names"],
         "joint_directions": real_params["joint_directions"],
+        "vacuum_activate_topic": real_params["vacuum_activate_topic"],
         "kp": controller_params["kp"],
         "kd": controller_params["kd"],
     }

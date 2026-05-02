@@ -10,6 +10,7 @@
 #include "dmbot_serial/protocol/damiao.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/bool.hpp"
 
 
 class Usb2canfdDMNode : public rclcpp::Node
@@ -20,6 +21,7 @@ public:
 
 private:
   void command_callback(const sensor_msgs::msg::JointState::SharedPtr msg);
+  void vacuum_gripper_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void publish_joint_state();
 
   damiao::Control_Mode control_mode_{damiao::MIT_MODE};
@@ -34,6 +36,7 @@ private:
   std::vector<float> kd_arr_;
 
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr command_subscriber_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr vacuum_gripper_subscriber_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

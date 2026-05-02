@@ -254,6 +254,15 @@ Request payload detach:
 ros2 topic pub --once /arm2/payload_attached std_msgs/msg/Bool "{data: false}"
 ```
 
+
+## Vacuum Gripper Enable and Disable
+```bash
+ros2 topic pub /vacuum/activate std_msgs/msg/Bool "{data: true}" -1
+```
+
+```bash
+ros2 topic pub /vacuum/activate std_msgs/msg/Bool "{data: false}" -1
+```
 The controller only applies payload model switching while in `HOLDING`. If a request arrives during trajectory execution, it is stored as pending and applied after the controller returns to `HOLDING`.
 
 When active:

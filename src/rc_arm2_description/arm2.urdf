@@ -84,7 +84,7 @@
       lower="-3.14159"
       upper="3.14159"
       effort="10"
-      velocity="3.0" />
+      velocity="12.0" />
   </joint>
 
   <link name="l2">
@@ -135,7 +135,7 @@
       lower="-3.14159"
       upper="3.14159"
       effort="10"
-      velocity="3.0" />
+      velocity="12.0" />
   </joint>
 
   <link name="l3">
@@ -186,7 +186,7 @@
       lower="-3.14159"
       upper="3.14159"
       effort="10"
-      velocity="3.0" />
+      velocity="12.0" />
   </joint>
 
   <link name="l4">
@@ -237,7 +237,7 @@
       lower="-3.14159"
       upper="3.14159"
       effort="10"
-      velocity="3.0" />
+      velocity="12.0" />
   </joint>
 
   <link name="tool0" />

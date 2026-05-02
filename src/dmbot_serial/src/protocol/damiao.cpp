@@ -339,6 +339,33 @@ namespace damiao
         usb_hw->set_tx_frame(&tx_msg);
         usb_hw->send_data();
     }
+
+    void Motor_Control::enable_vacuum_gripper()
+    {
+        std::vector<uint8_t> enable_data = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe}; // enable首字母是e，所以末数据是fe，随意制定，与电机协议无关
+        can_tx_type tx_msg;
+        printf("[Tx Enable] ID:0x0C Data:");
+        for (auto v : enable_data)
+            printf(" %02X", v);
+        printf("\n");
+        usb_hw->fillFDCANFrame(enable_data, tx_msg, 0x0C);
+        usb_hw->set_tx_frame(&tx_msg);
+        usb_hw->send_data();
+    }
+    
+    void Motor_Control::disable_vaccum_gripper()
+    {
+        std::vector<uint8_t> disable_data = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd}; // disable首字母是d，所以末数据是fd
+        can_tx_type tx_msg;
+        printf("[Tx Disable] ID:0x0C Data:");
+        for (auto v : disable_data)
+            printf(" %02X", v);
+        printf("\n");
+        usb_hw->fillFDCANFrame(disable_data, tx_msg, 0x0C);
+        usb_hw->set_tx_frame(&tx_msg);
+        usb_hw->send_data();
+    }
+
     /********************************************************************************************************************************************************************* */
     /********************************************************************************************************************************************************************* */
     /********************************************************************************************************************************************************************* */

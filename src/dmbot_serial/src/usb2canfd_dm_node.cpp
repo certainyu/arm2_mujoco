@@ -65,6 +65,7 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   this->declare_parameter<int64_t>("control_mode", 0);
   this->declare_parameter<std::string>("command_topic", "/arm2/command/effort");
   this->declare_parameter<std::string>("joint_state_topic", "/joint_states");
+  this->declare_parameter<std::string>("vacuum_activate_topic", "/arm2/vacuum_activate");
   this->declare_parameter<std::vector<std::string>>("joint_names", std::vector<std::string>{"j1", "j2", "j3", "j4"});
   this->declare_parameter<std::vector<int64_t>>("joint_directions", std::vector<int64_t>{1, 1, 1, 1});
   this->declare_parameter<std::vector<double>>("kp", std::vector<double>{10.0, 15.0, 15.0, 1.0});
@@ -75,6 +76,7 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   const auto dat_baud = static_cast<uint32_t>(this->get_parameter("dat_baud").as_int());
   const auto command_topic = this->get_parameter("command_topic").as_string();
   const auto joint_state_topic = this->get_parameter("joint_state_topic").as_string();
+  const auto vacuum_activate_topic = this->get_parameter("vacuum_activate_topic").as_string();
   const auto motor_ids_param = this->get_parameter("motor_ids").as_integer_array();
   const auto master_ids_param = this->get_parameter("master_ids").as_integer_array();
   const auto motor_types_param = this->get_parameter("motor_types").as_integer_array();
@@ -162,6 +164,9 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   command_subscriber_ = this->create_subscription<sensor_msgs::msg::JointState>(
     command_topic, qos,
     std::bind(&Usb2canfdDMNode::command_callback, this, std::placeholders::_1));
+  vacuum_gripper_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
+    vacuum_activate_topic, 10,
+    std::bind(&Usb2canfdDMNode::vacuum_gripper_callback, this, std::placeholders::_1));
 
   joint_state_publisher_ =
     this->create_publisher<sensor_msgs::msg::JointState>(joint_state_topic, 10);
@@ -171,8 +176,8 @@ Usb2canfdDMNode::Usb2canfdDMNode()
 
   RCLCPP_INFO(
     this->get_logger(),
-    "DM Motor Driver Node initialized. command_topic=%s joint_state_topic=%s",
-    command_topic.c_str(), joint_state_topic.c_str());
+    "DM Motor Driver Node initialized. command_topic=%s joint_state_topic=%s vacuum_activate_topic=%s",
+    command_topic.c_str(), joint_state_topic.c_str(), vacuum_activate_topic.c_str());
 }
 
 Usb2canfdDMNode::~Usb2canfdDMNode()
@@ -267,6 +272,21 @@ void Usb2canfdDMNode::command_callback(const sensor_msgs::msg::JointState::Share
     RCLCPP_INFO(this->get_logger(), "Motor commands sent successfully");
   } catch (const std::exception & e) {
     RCLCPP_ERROR(this->get_logger(), "Unexpected error in command_callback: %s", e.what());
+  }
+}
+
+void Usb2canfdDMNode::vacuum_gripper_callback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+  try {
+    if (msg->data) {
+      motor_control_->enable_vacuum_gripper();
+      RCLCPP_INFO(this->get_logger(), "Vacuum gripper activated");
+    } else {
+      motor_control_->disable_vaccum_gripper();
+      RCLCPP_INFO(this->get_logger(), "Vacuum gripper deactivated");
+    }
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(this->get_logger(), "Unexpected error in vacuum_gripper_callback: %s", e.what());
   }
 }
 

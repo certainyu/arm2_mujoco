@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 ## 查找 libusb（使用 pkg-config）
 find_package(PkgConfig REQUIRED)
@@ -63,6 +64,7 @@ target_link_libraries(usb2canfd_dm_node_cpp
 ament_target_dependencies(usb2canfd_dm_node_cpp
   rclcpp
   sensor_msgs
+  std_msgs
 )
 
 add_executable(debugger_node_cpp
@@ -71,6 +73,7 @@ add_executable(debugger_node_cpp
 ament_target_dependencies(debugger_node_cpp
   rclcpp
   sensor_msgs
+  std_msgs
 )
 
 install(
