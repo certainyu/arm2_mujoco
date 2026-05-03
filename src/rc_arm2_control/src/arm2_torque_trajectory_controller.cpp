@@ -852,12 +852,17 @@ private:
   {
     hold_q_ = final_target.q;
     double max_error = 0.0;
+    std::ostringstream error_details;
     for (std::size_t i = 0; i < kDof; ++i) {
-      max_error = std::max(max_error, std::abs(final_target.q[i] - current_q_[i]));
+      const double joint_error = final_target.q[i] - current_q_[i];
+      max_error = std::max(max_error, std::abs(joint_error));
+      if (i != 0) {
+        error_details << ", ";
+      }
+      error_details << joint_names_[i] << "=" << joint_error;
     }
     // 如果最大位置误差在容忍范围内，认为目标达成，succeed action；
     if (max_error <= goal_tolerance_rad_) {
-
       auto result = std::make_shared<FollowJointTrajectory::Result>();
       result->error_code = control_msgs::action::FollowJointTrajectory_Result::SUCCESSFUL;
       result->error_string = "goal reached";
@@ -871,7 +876,9 @@ private:
     // 否则认为执行失败，abort action。
     else {
       std::ostringstream stream;
-      stream << "goal tolerance violated, max error=" << max_error;
+      stream << "goal tolerance violated, max error=" << max_error <<
+        ", joint_errors=[" << error_details.str() << "]";
+      RCLCPP_WARN(get_logger(), "%s", stream.str().c_str());
       finish_abort_locked(
         control_msgs::action::FollowJointTrajectory_Result::GOAL_TOLERANCE_VIOLATED,
         stream.str());
