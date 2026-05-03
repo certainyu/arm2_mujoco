@@ -25,11 +25,14 @@ def _usb2canfd_params_from_controller() -> dict:
     return {
         "command_topic": controller_params["command_topic"],
         "joint_state_topic": controller_params["joint_state_topic"],
+        "payload_active_topic": controller_params["payload_active_topic"],
         "joint_names": controller_params["joint_names"],
         "joint_directions": real_params["joint_directions"],
         "vacuum_activate_topic": real_params["vacuum_activate_topic"],
-        "kp": controller_params["kp"],
-        "kd": controller_params["kd"],
+        "kp_unloaded": controller_params["kp_unloaded"],
+        "kd_unloaded": controller_params["kd_unloaded"],
+        "kp_loaded": controller_params["kp_loaded"],
+        "kd_loaded": controller_params["kd_loaded"],
     }
 
 

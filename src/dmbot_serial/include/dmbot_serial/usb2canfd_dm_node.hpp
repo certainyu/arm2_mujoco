@@ -21,6 +21,7 @@ public:
 
 private:
   void command_callback(const sensor_msgs::msg::JointState::SharedPtr msg);
+  void payload_active_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void vacuum_gripper_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void publish_joint_state();
 
@@ -32,10 +33,14 @@ private:
   std::size_t motor_count_{0};
   std::vector<std::string> joint_names_;
   std::vector<float> joint_directions_;
-  std::vector<float> kp_arr_;
-  std::vector<float> kd_arr_;
+  std::vector<float> kp_unloaded_arr_;
+  std::vector<float> kd_unloaded_arr_;
+  std::vector<float> kp_loaded_arr_;
+  std::vector<float> kd_loaded_arr_;
+  bool payload_attached_{false};
 
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr command_subscriber_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr payload_active_subscriber_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr vacuum_gripper_subscriber_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;

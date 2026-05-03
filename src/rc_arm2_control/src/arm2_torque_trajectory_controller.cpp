@@ -162,8 +162,9 @@ public:
     payload_mass_ = declare_parameter<double>("payload_mass", 0.2);
     payload_cube_side_ = declare_parameter<double>("payload_cube_side", 0.08);
 
-    // 默认的 effort_limits、kp、kd 参数，如果用户没有在参数服务器提供这些参数，就使用这些默认值。
-    // kp/kd 仍作为参数声明以兼容现有 YAML；仿真节点会实际读取并用于 MIT 计算。
+    // 默认的 effort_limits 和 MIT 闭环参数。
+    // 控制器本体不直接使用 Kp/Kd，但仍声明 loaded/unloaded 两套参数，
+    // 便于仿真节点和真机电机驱动共享同一份 YAML 配置。
     const auto effort_defaults_limits = std::array<double, kDof>{10.0, 10.0, 10.0, 10.0};
     const auto kp_defaults = std::array<double, kDof>{20.0, 20.0, 15.0, 5.0};
     const auto kd_defaults = std::array<double, kDof>{1.5, 1.5, 1.0, 0.25};
@@ -173,16 +174,26 @@ public:
         effort_defaults_limits.begin(), effort_defaults_limits.end()}),
       effort_defaults_limits, 
       "effort_limits");
-    kp_ = to_array4(
-      declare_parameter<std::vector<double>>("kp", std::vector<double>{
+    kp_unloaded_ = to_array4(
+      declare_parameter<std::vector<double>>("kp_unloaded", std::vector<double>{
         kp_defaults.begin(), kp_defaults.end()}),
-      kp_defaults, 
-      "kp");
-    kd_ = to_array4(
-      declare_parameter<std::vector<double>>("kd", std::vector<double>{
+      kp_defaults,
+      "kp_unloaded");
+    kd_unloaded_ = to_array4(
+      declare_parameter<std::vector<double>>("kd_unloaded", std::vector<double>{
         kd_defaults.begin(), kd_defaults.end()}),
-      kd_defaults, 
-      "kd");
+      kd_defaults,
+      "kd_unloaded");
+    kp_loaded_ = to_array4(
+      declare_parameter<std::vector<double>>("kp_loaded", std::vector<double>{
+        kp_defaults.begin(), kp_defaults.end()}),
+      kp_defaults,
+      "kp_loaded");
+    kd_loaded_ = to_array4(
+      declare_parameter<std::vector<double>>("kd_loaded", std::vector<double>{
+        kd_defaults.begin(), kd_defaults.end()}),
+      kd_defaults,
+      "kd_loaded");
 
     // 从参数服务器读取 urdf_path 参数，如果用户没有提供，就使用 rc_arm2_description 包中的arm2.urdf
     auto urdf_path = declare_parameter<std::string>("urdf_path", "");
@@ -1023,8 +1034,10 @@ private:
   // 正方体边长，单位米，默认 0.08 m（8 cm）。根据质量和尺寸计算惯量。
   double payload_cube_side_{0.08};
   std::array<double, kDof> effort_limits_{10.0, 10.0, 10.0, 10.0};
-  std::array<double, kDof> kp_{20.0, 20.0, 15.0, 5.0};
-  std::array<double, kDof> kd_{1.5, 1.5, 1.0, 0.25};
+  std::array<double, kDof> kp_unloaded_{20.0, 20.0, 15.0, 5.0};
+  std::array<double, kDof> kd_unloaded_{1.5, 1.5, 1.0, 0.25};
+  std::array<double, kDof> kp_loaded_{20.0, 20.0, 15.0, 5.0};
+  std::array<double, kDof> kd_loaded_{1.5, 1.5, 1.0, 0.25};
   // 每个关节的力矩饱和持续时间，初始为 0。如果某个关节的饱和时间超过 saturation_abort_sec_，就认为控制失败
   std::array<double, kDof> saturation_time_{0.0, 0.0, 0.0, 0.0};
 

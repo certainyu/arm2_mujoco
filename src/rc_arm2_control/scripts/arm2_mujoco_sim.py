@@ -158,12 +158,20 @@ class Arm2MujocoSim(Node):
             list(self.declare_parameter("effort_limits", [10.0, 10.0, 10.0, 10.0]).value),
             dtype=float,
         )
-        self.kp = np.array(
-            list(self.declare_parameter("kp", [20.0, 20.0, 15.0, 5.0]).value),
+        self.kp_unloaded = np.array(
+            list(self.declare_parameter("kp_unloaded", [20.0, 20.0, 15.0, 5.0]).value),
             dtype=float,
         )
-        self.kd = np.array(
-            list(self.declare_parameter("kd", [1.5, 1.5, 1.0, 0.25]).value),
+        self.kd_unloaded = np.array(
+            list(self.declare_parameter("kd_unloaded", [1.5, 1.5, 1.0, 0.25]).value),
+            dtype=float,
+        )
+        self.kp_loaded = np.array(
+            list(self.declare_parameter("kp_loaded", [20.0, 20.0, 15.0, 5.0]).value),
+            dtype=float,
+        )
+        self.kd_loaded = np.array(
+            list(self.declare_parameter("kd_loaded", [1.5, 1.5, 1.0, 0.25]).value),
             dtype=float,
         )
         self.payload_mass = float(self.declare_parameter("payload_mass", 0.2).value)
@@ -179,10 +187,14 @@ class Arm2MujocoSim(Node):
             raise RuntimeError("joint_names must contain exactly 4 names")
         if len(self.effort_limits) != 4:
             raise RuntimeError("effort_limits must contain exactly 4 values")
-        if len(self.kp) != 4:
-            raise RuntimeError("kp must contain exactly 4 values")
-        if len(self.kd) != 4:
-            raise RuntimeError("kd must contain exactly 4 values")
+        if len(self.kp_unloaded) != 4:
+            raise RuntimeError("kp_unloaded must contain exactly 4 values")
+        if len(self.kd_unloaded) != 4:
+            raise RuntimeError("kd_unloaded must contain exactly 4 values")
+        if len(self.kp_loaded) != 4:
+            raise RuntimeError("kp_loaded must contain exactly 4 values")
+        if len(self.kd_loaded) != 4:
+            raise RuntimeError("kd_loaded must contain exactly 4 values")
 
         mjcf_path = self._write_mjcf()
         self.model = mujoco.MjModel.from_xml_path(str(mjcf_path))
@@ -240,11 +252,17 @@ class Arm2MujocoSim(Node):
         target_q, target_dq, target_tau = command
         current_q = np.array([float(self.data.qpos[adr]) for adr in self.qpos_adr], dtype=float)
         current_dq = np.array([float(self.data.qvel[adr]) for adr in self.qvel_adr], dtype=float)
-        values = target_tau + self.kp * (target_q - current_q) + self.kd * (target_dq - current_dq)
+        kp, kd = self._active_gains()
+        values = target_tau + kp * (target_q - current_q) + kd * (target_dq - current_dq)
         if not np.all(np.isfinite(values)):
             self.get_logger().warn("Ignoring MIT command that produced non-finite torque")
             return
         self.ctrl = np.clip(values, -self.effort_limits, self.effort_limits)
+
+    def _active_gains(self) -> Tuple[np.ndarray, np.ndarray]:
+        if self.payload_attached:
+            return self.kp_loaded, self.kd_loaded
+        return self.kp_unloaded, self.kd_unloaded
 
     def _read_command_joint_state(
         self,
@@ -303,10 +321,16 @@ class Arm2MujocoSim(Node):
         if attached:
             self._move_payload_to_tool()
             self.data.eq_active[self.payload_weld_id] = 1
-            self.get_logger().info("Payload cube attached in MuJoCo")
+            self.get_logger().info(
+                f"Payload cube attached in MuJoCo; MIT gains switched to loaded kp={self.kp_loaded.tolist()} "
+                f"kd={self.kd_loaded.tolist()}"
+            )
         else:
             self.data.eq_active[self.payload_weld_id] = 0
-            self.get_logger().info("Payload cube detached in MuJoCo")
+            self.get_logger().info(
+                f"Payload cube detached in MuJoCo; MIT gains switched to unloaded kp={self.kp_unloaded.tolist()} "
+                f"kd={self.kd_unloaded.tolist()}"
+            )
         self.payload_attached = attached
         mujoco.mj_forward(self.model, self.data)
 

@@ -65,24 +65,34 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   this->declare_parameter<int64_t>("control_mode", 0);
   this->declare_parameter<std::string>("command_topic", "/arm2/command/effort");
   this->declare_parameter<std::string>("joint_state_topic", "/joint_states");
+  this->declare_parameter<std::string>("payload_active_topic", "/arm2/payload_active");
   this->declare_parameter<std::string>("vacuum_activate_topic", "/arm2/vacuum_activate");
   this->declare_parameter<std::vector<std::string>>("joint_names", std::vector<std::string>{"j1", "j2", "j3", "j4"});
   this->declare_parameter<std::vector<int64_t>>("joint_directions", std::vector<int64_t>{1, 1, 1, 1});
-  this->declare_parameter<std::vector<double>>("kp", std::vector<double>{10.0, 15.0, 15.0, 1.0});
-  this->declare_parameter<std::vector<double>>("kd", std::vector<double>{0.5, 0.95, 0.95, 0.03});
+  this->declare_parameter<std::vector<double>>(
+    "kp_unloaded", std::vector<double>{10.0, 15.0, 15.0, 1.0});
+  this->declare_parameter<std::vector<double>>(
+    "kd_unloaded", std::vector<double>{0.5, 0.95, 0.95, 0.03});
+  this->declare_parameter<std::vector<double>>(
+    "kp_loaded", std::vector<double>{10.0, 15.0, 15.0, 1.0});
+  this->declare_parameter<std::vector<double>>(
+    "kd_loaded", std::vector<double>{0.5, 0.95, 0.95, 0.03});
 
   const auto sn = this->get_parameter("sn").as_string();
   const auto nom_baud = static_cast<uint32_t>(this->get_parameter("nom_baud").as_int());
   const auto dat_baud = static_cast<uint32_t>(this->get_parameter("dat_baud").as_int());
   const auto command_topic = this->get_parameter("command_topic").as_string();
   const auto joint_state_topic = this->get_parameter("joint_state_topic").as_string();
+  const auto payload_active_topic = this->get_parameter("payload_active_topic").as_string();
   const auto vacuum_activate_topic = this->get_parameter("vacuum_activate_topic").as_string();
   const auto motor_ids_param = this->get_parameter("motor_ids").as_integer_array();
   const auto master_ids_param = this->get_parameter("master_ids").as_integer_array();
   const auto motor_types_param = this->get_parameter("motor_types").as_integer_array();
   const auto control_mode_value = static_cast<int>(this->get_parameter("control_mode").as_int());
-  const auto kp_param = this->get_parameter("kp").as_double_array();
-  const auto kd_param = this->get_parameter("kd").as_double_array();
+  const auto kp_unloaded_param = this->get_parameter("kp_unloaded").as_double_array();
+  const auto kd_unloaded_param = this->get_parameter("kd_unloaded").as_double_array();
+  const auto kp_loaded_param = this->get_parameter("kp_loaded").as_double_array();
+  const auto kd_loaded_param = this->get_parameter("kd_loaded").as_double_array();
   const auto joint_names_param = this->get_parameter("joint_names").as_string_array();
   const auto joint_directions_param = this->get_parameter("joint_directions").as_integer_array();
 
@@ -149,8 +159,10 @@ Usb2canfdDMNode::Usb2canfdDMNode()
             "joint_names must contain exactly " + std::to_string(motor_count_) + " values");
   }
   joint_directions_ = to_direction_vector(joint_directions_param, motor_count_, "joint_directions");
-  kp_arr_ = to_float_vector(kp_param, motor_count_, "kp");
-  kd_arr_ = to_float_vector(kd_param, motor_count_, "kd");
+  kp_unloaded_arr_ = to_float_vector(kp_unloaded_param, motor_count_, "kp_unloaded");
+  kd_unloaded_arr_ = to_float_vector(kd_unloaded_param, motor_count_, "kd_unloaded");
+  kp_loaded_arr_ = to_float_vector(kp_loaded_param, motor_count_, "kp_loaded");
+  kd_loaded_arr_ = to_float_vector(kd_loaded_param, motor_count_, "kd_loaded");
 
   std::ostringstream direction_ss;
   direction_ss << "Joint mapping:";
@@ -164,6 +176,9 @@ Usb2canfdDMNode::Usb2canfdDMNode()
   command_subscriber_ = this->create_subscription<sensor_msgs::msg::JointState>(
     command_topic, qos,
     std::bind(&Usb2canfdDMNode::command_callback, this, std::placeholders::_1));
+  payload_active_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
+    payload_active_topic, 10,
+    std::bind(&Usb2canfdDMNode::payload_active_callback, this, std::placeholders::_1));
   vacuum_gripper_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
     vacuum_activate_topic, 10,
     std::bind(&Usb2canfdDMNode::vacuum_gripper_callback, this, std::placeholders::_1));
@@ -176,8 +191,9 @@ Usb2canfdDMNode::Usb2canfdDMNode()
 
   RCLCPP_INFO(
     this->get_logger(),
-    "DM Motor Driver Node initialized. command_topic=%s joint_state_topic=%s vacuum_activate_topic=%s",
-    command_topic.c_str(), joint_state_topic.c_str(), vacuum_activate_topic.c_str());
+    "DM Motor Driver Node initialized. command_topic=%s joint_state_topic=%s payload_active_topic=%s vacuum_activate_topic=%s",
+    command_topic.c_str(), joint_state_topic.c_str(), payload_active_topic.c_str(),
+    vacuum_activate_topic.c_str());
 }
 
 Usb2canfdDMNode::~Usb2canfdDMNode()
@@ -254,26 +270,40 @@ void Usb2canfdDMNode::command_callback(const sensor_msgs::msg::JointState::Share
       ss << tau_arr[i];
       if (i + 1 < motor_count_) ss << ", ";
     }
+    const auto & active_kp = payload_attached_ ? kp_loaded_arr_ : kp_unloaded_arr_;
+    const auto & active_kd = payload_attached_ ? kd_loaded_arr_ : kd_unloaded_arr_;
     ss << "], kp=[";
     for (std::size_t i = 0; i < motor_count_; ++i) {
-      ss << kp_arr_[i];
+      ss << active_kp[i];
       if (i + 1 < motor_count_) ss << ", ";
     }
     ss << "], kd=[";
     for (std::size_t i = 0; i < motor_count_; ++i) {
-      ss << kd_arr_[i];
+      ss << active_kd[i];
       if (i + 1 < motor_count_) ss << ", ";
     }
     ss << "]";
     RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
     */
+    auto * active_kp = payload_attached_ ? &kp_loaded_arr_ : &kp_unloaded_arr_;
+    auto * active_kd = payload_attached_ ? &kd_loaded_arr_ : &kd_unloaded_arr_;
     motor_control_->CtrlMotors(
-      q_arr.data(), dq_arr.data(), kp_arr_.data(), kd_arr_.data(), tau_arr.data());
+      q_arr.data(), dq_arr.data(), active_kp->data(), active_kd->data(), tau_arr.data());
 
     //RCLCPP_INFO(this->get_logger(), "Motor commands sent successfully");
   } catch (const std::exception & e) {
     RCLCPP_ERROR(this->get_logger(), "Unexpected error in command_callback: %s", e.what());
   }
+}
+
+void Usb2canfdDMNode::payload_active_callback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+  payload_attached_ = msg->data;
+  RCLCPP_INFO(
+    this->get_logger(),
+    "Payload state switched to %s; using %s MIT gains",
+    payload_attached_ ? "attached" : "detached",
+    payload_attached_ ? "loaded" : "unloaded");
 }
 
 void Usb2canfdDMNode::vacuum_gripper_callback(const std_msgs::msg::Bool::SharedPtr msg)
