@@ -32,15 +32,15 @@ arm2_torque_trajectory_controller:
     goal_tolerance_rad: 0.02
     settle_time_sec: 0.5
     # 负载相关参数。tool0_frame_name 必须存在于 URDF 中；
-    # 正方体质心位于 tool0 的 +Z 方向 payload_cube_side / 2。
+    # 正方体质心位于 tool0 的 -Y 方向 payload_cube_side / 2。
     tool0_frame_name: tool0
-    # 默认负载质量 0.2 kg，边长 0.08 m，用户可以根据实际负载调整这两个参数以获得更准确的动力学补偿。
+    # 默认负载质量 0.7 kg，边长 0.35 m，用户可以根据实际负载调整这两个参数以获得更准确的动力学补偿。
     payload_mass: 0.7
     payload_cube_side: 0.35
 
 arm2_mujoco_real:
   ros__parameters:
-    # 与 URDF 正方向一致的关节方向系数；真机中 j2、j4 需要取反。
+    # 与 URDF 正方向一致的关节方向系数；真机中 j4 需要取反。
     joint_directions: [1, 1, 1, -1]
     vacuum_activate_topic: /arm2/vacuum_activate
 

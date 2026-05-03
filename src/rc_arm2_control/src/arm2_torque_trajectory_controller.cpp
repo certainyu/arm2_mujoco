@@ -250,7 +250,7 @@ public:
         this,
         std::placeholders::_1));
 
-    // 创建 250 Hz 的控制定时器，周期由 control_rate_hz_ 参数指定。
+    // 创建 500 Hz 的控制定时器，周期由 control_rate_hz_ 参数指定。
     if (control_rate_hz_ <= 0.0) {
       throw std::runtime_error("control_rate_hz must be positive");
     }
@@ -328,7 +328,7 @@ private:
    * @brief 在 loaded_model_ 上追加正方体负载惯量。
    *
    * 正方体通过吸盘吸附在一个面的面心，因此质心位于 tool0 坐标系
-   * +Z 方向 payload_cube_side / 2 的位置。惯量按薄壁正方体表面均匀分布计算，
+   * -Y 方向 payload_cube_side / 2 的位置。惯量按薄壁正方体表面均匀分布计算，
    * 忽略厚度时 Ixx = Iyy = Izz = (5/18) * m * a^2。
    *
    * @throw std::runtime_error 当 URDF 中不存在 tool0 frame、负载质量非法、
@@ -600,7 +600,7 @@ private:
   }
 
   /**
-   * @brief 250 Hz 控制循环入口。可在arm2_control.yaml中修改
+   * @brief 500 Hz 控制循环入口。可在arm2_control.yaml中修改
    *
    * 该函数由 wall timer 周期调用。根据当前状态选择执行轨迹跟踪
    * 或静态保持，并在合适时处理延迟的负载模型切换。
