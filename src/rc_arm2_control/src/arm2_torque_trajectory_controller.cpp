@@ -33,11 +33,6 @@ namespace
 {
 // 固定自由度 4
 constexpr std::size_t kDof = 4;
-// 定义了一个非常小的正数，
-// 计算两个轨迹点的时间间隔 b.t - a.t 时，如果间隔非常小甚至为 0
-// 就用 1e-9 代替，防止 (elapsed - a.t) / span 出现除以 0。
-constexpr double kMinPositive = 1.0e-9;
-
 using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
 using GoalHandleFollowJointTrajectory = rclcpp_action::ServerGoalHandle<FollowJointTrajectory>;
 using JointTrajectoryPoint = trajectory_msgs::msg::JointTrajectoryPoint;
@@ -493,6 +488,7 @@ private:
 
   /**
    * @brief 将 ROS 轨迹转换为控制器内部轨迹格式。
+   * 最后一个点加速度被强制写0
    *
    * @param goal 已通过基本校验的 action 目标。
    * @param error 输出参数；转换失败时写入失败原因。
@@ -527,6 +523,7 @@ private:
       }
       trajectory_.push_back(sample);
     }
+    trajectory_.back().ddq.fill(0.0);
     trajectory_duration_sec_ = trajectory_.back().t;
     return true;
   }
@@ -675,8 +672,8 @@ private:
    * @param elapsed 从当前 action 目标开始执行到现在的时间，单位秒。
    * @return TargetSample 当前时刻对应的 q、dq、ddq 目标。
    *
-   * 轨迹点之间使用线性插值。轨迹的平滑性主要依赖上游
-   * MoveIt/时间参数化模块生成连续的 q、dq、ddq。
+   * 轨迹点之间不做线性插值，而是直接取当前时刻之后的下一个轨迹点。
+   * 最后一个轨迹点的 ddq 会在轨迹装载时强制清零，避免收尾阶段继续施加加速度前馈。
    */
   TargetSample sample_trajectory(double elapsed) const
   {
@@ -699,21 +696,10 @@ private:
     auto upper = std::upper_bound(
       trajectory_.begin(), trajectory_.end(), elapsed,
       [](double t, const TargetSample & sample) {return t < sample.t;});
-    // 现在位置在 upper 前一个点和 upper 之间，做线性插值。
+    // 现在位置处于 upper 前一个点和 upper 之间，直接使用后一个轨迹点。
     const auto & b = *upper;
-    const auto & a = *(upper - 1);
-    // 计算时间比例，作为路程比例alpha
-    const double span = std::max(b.t - a.t, kMinPositive);
-    const double alpha = std::clamp((elapsed - a.t) / span, 0.0, 1.0);
-
-    // 对每个关节的 q、dq、ddq 做线性插值，得到当前时刻的目标点。
-    TargetSample out;
+    TargetSample out = b;
     out.t = elapsed;
-    for (std::size_t i = 0; i < kDof; ++i) {
-      out.q[i] = a.q[i] + alpha * (b.q[i] - a.q[i]);
-      out.dq[i] = a.dq[i] + alpha * (b.dq[i] - a.dq[i]);
-      out.ddq[i] = a.ddq[i] + alpha * (b.ddq[i] - a.ddq[i]);
-    }
     return out;
   }
 

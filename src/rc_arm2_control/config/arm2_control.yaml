@@ -21,10 +21,10 @@ arm2_torque_trajectory_controller:
     # 仿真和真机电机驱动都使用下面的 `*_unloaded` / `*_loaded`
     # 两套参数，并在 payload_active 切换时自动切换。
     effort_limits: [10.0, 10.0, 10.0, 10.0]
-    kp_unloaded: [5.0, 20.0, 10.0, 5.0]
-    kd_unloaded: [0.5, 0.95, 0.5, 0.03]
+    kp_unloaded: [10.0, 50.0, 30.0, 5.0]
+    kd_unloaded: [1.5, 5.0, 3.0, 0.03]
     kp_loaded: [5.0, 70.0, 50.0, 70.0]
-    kd_loaded: [0.5, 10.0, 2.0, 1.0]
+    kd_loaded: [1.5, 10.0, 2.0, 1.0]
     # 如果连续的力矩饱和时间超过 saturation_abort_sec_，则认为执行失败并进入 FAULT 状态。
     saturation_abort_sec: 0.25
     # 执行轨迹时，如果最终位置与目标位置的误差小于 goal_tolerance_rad_，
