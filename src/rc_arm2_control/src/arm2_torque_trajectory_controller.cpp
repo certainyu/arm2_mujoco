@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -22,11 +23,11 @@
 #include "pinocchio/parsers/urdf.hpp"
 #include "pinocchio/spatial/inertia.hpp"
 #include "pinocchio/spatial/se3.hpp"
+#include "rc_arm2_msgs/msg/arm2_controller_state.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "trajectory_msgs/msg/joint_trajectory_point.hpp"
 
 namespace
@@ -41,6 +42,7 @@ constexpr double kMinPositive = 1.0e-9;
 using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
 using GoalHandleFollowJointTrajectory = rclcpp_action::ServerGoalHandle<FollowJointTrajectory>;
 using JointTrajectoryPoint = trajectory_msgs::msg::JointTrajectoryPoint;
+using Arm2ControllerState = rc_arm2_msgs::msg::Arm2ControllerState;
 
 /**
  * @brief 将参数中的 vector<double> 转换为固定长度 4 的数组(array<double, kDof>)。
@@ -141,8 +143,7 @@ public:
     // 发布负载吸附状态的 topic，类型为 std_msgs::msg::Bool，目前由控制器发布当前使用的模型是带负载还是空载
     payload_active_topic_ = declare_parameter<std::string>(
       "payload_active_topic", "/arm2/payload_active");
-    // 发布控制器状态的 topic，类型为 std_msgs::msg::String，
-    // 包含 "initialized"、"goal accepted"、"payload switch pending"、"holding torque saturation fault" 等状态信息
+    // 发布控制器状态的 topic，类型为 rc_arm2_msgs::msg::Arm2ControllerState。
     state_topic_ = declare_parameter<std::string>("state_topic", "/arm2_controller/state");
     
     // 控制周期频率，单位 Hz，默认 250 Hz
@@ -209,7 +210,7 @@ public:
     effort_pub_ = create_publisher<sensor_msgs::msg::JointState>(command_topic_, 10);
     // state_pub_ 发布控制器状态
     // "/arm2_controller/state"
-    state_pub_ = create_publisher<std_msgs::msg::String>(state_topic_, 10);
+    state_pub_ = create_publisher<Arm2ControllerState>(state_topic_, 10);
 
     // joint_state_sub_ 订阅关节状态
     // "/joint_states"
@@ -264,7 +265,7 @@ public:
     // 初始化完成，进入 HOLDING 状态，等待接收轨迹目标。
     state_ = State::HOLDING;
     publish_payload_active();
-    publish_state("initialized");
+    publish_state(Arm2ControllerState::DETAIL_CODE_INITIALIZED);
     RCLCPP_INFO(
       get_logger(),
       "arm2 torque controller ready. joints=[%s], action=%s, control_rate=%.1f Hz",
@@ -434,7 +435,7 @@ private:
     last_feedback_time_ = trajectory_start_time_;
     saturation_time_.fill(0.0);
     state_ = State::EXECUTING;
-    publish_state("goal accepted");
+    publish_state(Arm2ControllerState::DETAIL_CODE_GOAL_ACCEPTED);
   }
 
   /**
@@ -565,7 +566,7 @@ private:
     if (!hold_initialized_) {
       hold_q_ = q;
       hold_initialized_ = true;
-      publish_state("first joint state received");
+      publish_state(Arm2ControllerState::DETAIL_CODE_FIRST_JOINT_STATE_RECEIVED);
     }
   }
 
@@ -595,7 +596,7 @@ private:
       switch_payload_locked();
     } else {
       pending_payload_switch_ = true;
-      publish_state("payload switch pending");
+      publish_state(Arm2ControllerState::DETAIL_CODE_PAYLOAD_SWITCH_PENDING);
     }
   }
 
@@ -633,7 +634,8 @@ private:
       if (!command_ok) {
         finish_abort_locked(
           control_msgs::action::FollowJointTrajectory_Result::PATH_TOLERANCE_VIOLATED,
-          "feedforward torque saturation exceeded allowed duration");
+          "feedforward torque saturation exceeded allowed duration",
+          Arm2ControllerState::DETAIL_CODE_EXECUTION_TORQUE_SATURATION_ABORT);
         return;
       }
 
@@ -650,7 +652,7 @@ private:
       const bool command_ok = compute_and_publish_torque(target);
       if (!command_ok) {
         state_ = State::FAULT;
-        publish_state("holding torque saturation fault");
+        publish_state(Arm2ControllerState::DETAIL_CODE_HOLDING_TORQUE_SATURATION_FAULT);
       }
     }
   }
@@ -752,7 +754,7 @@ private:
 
       if (!std::isfinite(tau)) {
         state_ = State::FAULT;
-        publish_state("non-finite feedforward torque");
+        publish_state(Arm2ControllerState::DETAIL_CODE_NONFINITE_FEEDFORWARD_TORQUE);
         return false;
       }
 
@@ -871,7 +873,7 @@ private:
       active_goal_.reset();
       // 成功结束后进入 HOLDING 状态，继续保持在目标位置，等待下一个目标。
       state_ = State::HOLDING;
-      publish_state("goal succeeded");
+      publish_state(Arm2ControllerState::DETAIL_CODE_GOAL_SUCCEEDED);
     } 
     // 否则认为执行失败，abort action。
     else {
@@ -881,7 +883,8 @@ private:
       RCLCPP_WARN(get_logger(), "%s", stream.str().c_str());
       finish_abort_locked(
         control_msgs::action::FollowJointTrajectory_Result::GOAL_TOLERANCE_VIOLATED,
-        stream.str());
+        stream.str(),
+        Arm2ControllerState::DETAIL_CODE_GOAL_TOLERANCE_VIOLATED);
     }
   }
 
@@ -890,10 +893,14 @@ private:
    *
    * @param error_code FollowJointTrajectory result 的错误码。
    * @param error 错误描述字符串。
+   * @param detail_code 对外发布的结构化状态码。
    *
    * 中止后 hold_q_ 会设置为当前实测关节位置，避免继续追踪失败目标。
    */
-  void finish_abort_locked(int32_t error_code, const std::string & error)
+  void finish_abort_locked(
+    int32_t error_code,
+    const std::string & error,
+    int32_t detail_code)
   {
     if (active_goal_) {
       auto result = std::make_shared<FollowJointTrajectory::Result>();
@@ -905,7 +912,7 @@ private:
     hold_q_ = current_q_;
     state_ = State::HOLDING;
     saturation_time_.fill(0.0);
-    publish_state(error);
+    publish_state(detail_code);
   }
 
   /**
@@ -927,7 +934,7 @@ private:
     hold_q_ = current_q_;
     state_ = State::HOLDING;
     saturation_time_.fill(0.0);
-    publish_state(reason);
+    publish_state(Arm2ControllerState::DETAIL_CODE_CANCEL_REQUESTED);
   }
 
   /**
@@ -946,7 +953,10 @@ private:
     pending_payload_switch_ = false;
     saturation_time_.fill(0.0);
     publish_payload_active();
-    publish_state(active_payload_attached_ ? "payload attached" : "payload detached");
+    publish_state(
+      active_payload_attached_ ?
+      Arm2ControllerState::DETAIL_CODE_PAYLOAD_ATTACHED :
+      Arm2ControllerState::DETAIL_CODE_PAYLOAD_DETACHED);
   }
 
   /**
@@ -967,41 +977,39 @@ private:
   }
 
   /**
-   * @brief 发布控制器状态字符串。
+   * @brief 发布结构化控制器状态。
    *
-   * @param detail 附加说明，例如初始化完成、目标接受、负载切换等。
+   * @param detail_code 附加状态码，例如初始化完成、目标接受、负载切换等。
    */
-  void publish_state(const std::string & detail)
+  void publish_state(int32_t detail_code)
   {
-    std_msgs::msg::String msg;
-    std::ostringstream stream;
-    stream << "state=" << state_to_string(state_)
-           << " payload=" << (active_payload_attached_ ? "attached" : "detached")
-           << " pending_payload=" << (pending_payload_switch_ ? "true" : "false")
-           << " detail=\"" << detail << "\"";
-    msg.data = stream.str();
+    Arm2ControllerState msg;
+    msg.controller_state = state_to_msg_code(state_);
+    msg.payload_attached = active_payload_attached_;
+    msg.pending_payload_switch = pending_payload_switch_;
+    msg.detail_code = detail_code;
     state_pub_->publish(msg);
   }
 
   /**
-   * @brief 将状态枚举转换为可读字符串。
+   * @brief 将内部状态枚举转换为消息中的状态码。
    *
    * @param state 控制器状态枚举。
-   * @return const char* 状态名称字符串。
+   * @return int32_t 结构化状态码。
    */
-  const char * state_to_string(State state) const
+  int32_t state_to_msg_code(State state) const
   {
     switch (state) {
       case State::STARTUP:
-        return "STARTUP";
+        return Arm2ControllerState::CONTROLLER_STATE_STARTUP;
       case State::HOLDING:
-        return "HOLDING";
+        return Arm2ControllerState::CONTROLLER_STATE_HOLDING;
       case State::EXECUTING:
-        return "EXECUTING";
+        return Arm2ControllerState::CONTROLLER_STATE_EXECUTING;
       case State::FAULT:
-        return "FAULT";
+        return Arm2ControllerState::CONTROLLER_STATE_FAULT;
     }
-    return "UNKNOWN";
+    return Arm2ControllerState::CONTROLLER_STATE_UNKNOWN;
   }
 
   std::mutex mutex_;
@@ -1017,8 +1025,7 @@ private:
   std::string payload_command_topic_;
   // 控制器发布（给mujoco）当前实际负载状态的 topic， /arm2/payload_active。
   std::string payload_active_topic_;
-  // 发布控制器状态的 topic，类型为 std_msgs::msg::String，
-  // 包含 "initialized"、"goal accepted"、"payload switch pending"、"holding torque saturation fault" 等状态信息
+  // 发布控制器状态的 topic，类型为 rc_arm2_msgs::msg::Arm2ControllerState。
   std::string state_topic_;
   // URDF 中吸盘工具坐标系名称；负载位置只从该 frame 读取，不再从 YAML 配置几何偏移。
   std::string tool0_frame_name_{"tool0"};
@@ -1077,8 +1084,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr effort_pub_;
   // 发布当前负载状态的 publisher，发布到 payload_active_topic_，消息类型为 std_msgs::msg::Bool。
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr payload_active_pub_;
-  // 发布控制器状态的 publisher，发布到 state_topic_，消息类型为 std_msgs::msg::String。
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  // 发布控制器状态的 publisher，发布到 state_topic_，消息类型为 rc_arm2_msgs::msg::Arm2ControllerState。
+  rclcpp::Publisher<Arm2ControllerState>::SharedPtr state_pub_;
   // 订阅关节状态的 subscriber，订阅 joint_state_topic_，消息类型为 sensor_msgs::msg::JointState。
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   // 订阅负载状态请求的 subscriber，订阅 payload_command_topic_，消息类型为 std_msgs::msg::Bool。

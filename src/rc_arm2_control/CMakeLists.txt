@@ -12,6 +12,7 @@ find_package(Eigen3 REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(rc_arm2_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
@@ -25,6 +26,7 @@ ament_target_dependencies(arm2_torque_trajectory_controller
   control_msgs
   rclcpp
   rclcpp_action
+  rc_arm2_msgs
   sensor_msgs
   std_msgs
   trajectory_msgs

@@ -10,7 +10,31 @@ arm2_torque_trajectory_controller:
     payload_command_topic: /arm2/payload_attached
     # payload_active_pub_ 发布当前使用的模型是带负载还是空载，供 MuJoCo 订阅以启用/关闭 weld 连接
     payload_active_topic: /arm2/payload_active
-    # state_pub_ 发布控制器状态
+    # state_pub_ 发布结构化控制器状态 rc_arm2_msgs/msg/Arm2ControllerState
+    # int32 controller_state
+    #  UNKNOWN=0
+    #  STARTUP=1
+    #  HOLDING=2
+    #  EXECUTING=3
+    #  FAULT=4
+    # 
+    #  bool payload_attached
+    #  bool pending_payload_switch
+    #
+    #  int32 detail_code
+    #  NONE=0
+    #  INITIALIZED=1
+    #  GOAL_ACCEPTED=2
+    #  FIRST_JOINT_STATE_RECEIVED=3
+    #  PAYLOAD_SWITCH_PENDING=4
+    #  HOLDING_TORQUE_SATURATION_FAULT=5
+    #  NONFINITE_FEEDFORWARD_TORQUE=6
+    #  GOAL_SUCCEEDED=7
+    #  EXECUTION_TORQUE_SATURATION_ABORT=8
+    #  GOAL_TOLERANCE_VIOLATED=9
+    #  CANCEL_REQUESTED=10
+    #  PAYLOAD_ATTACHED=11
+    #  PAYLOAD_DETACHED=12
     state_topic: /arm2_controller/state
     # 控制周期频率，单位 Hz，默认 250 Hz
     control_rate_hz: 500.0
