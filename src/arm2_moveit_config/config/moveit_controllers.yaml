@@ -3,7 +3,7 @@ moveit_manage_controllers: false
 trajectory_execution:
   allowed_execution_duration_scaling: 1.5
   allowed_goal_duration_margin: 1.0
-  allowed_start_tolerance: 0.02
+  allowed_start_tolerance: 0.1
 moveit_simple_controller_manager:
   controller_names:
     - arm2_controller

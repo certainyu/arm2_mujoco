@@ -4,3 +4,4 @@ log/
 
 .codex
 __pycache__
+.agents/
