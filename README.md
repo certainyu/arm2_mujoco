@@ -1,333 +1,204 @@
 # arm2_mujoco
 
-4-DOF arm2 manipulator simulation, torque trajectory control, and MoveIt/OMPL planning integration.
+4 自由度 `arm2` 机械臂工作区，包含：
 
-This workspace intentionally does not use `ros2_control` in the current phase. MoveIt sends `FollowJointTrajectory` goals directly to the custom torque controller.
+- MuJoCo 仿真
+- 自定义力矩轨迹控制器
+- MoveIt 关节空间规划
+- 4D 任务目标 action
+- 宏动作 middleware
 
-## System Chain
+当前方案不使用 `ros2_control`。MoveIt 直接把 `FollowJointTrajectory` 发给自定义控制器。
 
-The normal execution chain is:
+## 系统链路
+
+### 直接任务目标链路
 
 ```text
-4D task goal
-  target_xyz + target_spin
-        |
-        v
-rc_arm2_moveit_client / arm2_plan_to_task_goal
-  custom Pinocchio 4D IK: [x, y, z, spin] -> q_goal
-        |
-        v
-MoveIt move_group
-  OMPL joint-space planning + time parameterization
-        |
-        v
+/arm2_task_goal
+  ->
+arm2_plan_to_task_goal
+  ->
+move_group
+  ->
 /arm2_controller/follow_joint_trajectory
-  FollowJointTrajectory action
-        |
-        v
-rc_arm2_control / arm2_torque_trajectory_controller
-  tau = RNEA(qd, dqd, ddqd) + Kp(qd - q) + Kd(dqd - dq)
-        |
-        v
+  ->
+arm2_torque_trajectory_controller
+  ->
 /arm2/command/effort
-        |
-        v
-rc_arm2_control / arm2_mujoco_sim.py
-  MuJoCo torque simulation and viewer
-        |
-        v
-/joint_states
+  ->
+arm2_mujoco_sim.py / 真机驱动
 ```
 
-Payload state is synchronized separately:
+### 宏动作链路
 
 ```text
+/arm2/middleware/target_point
+/arm2/middleware/command
+  ->
+arm2_middleware
+  ->
+/arm2_task_goal
 /arm2/payload_attached
-  external request
-        |
-        v
-arm2_torque_trajectory_controller
-  switches unloaded/loaded dynamics only in HOLDING
-        |
-        v
-/arm2/payload_active
-        |
-        +--> arm2_mujoco_sim.py
-        |     enables/disables MuJoCo weld to tool0
-        |
-        +--> arm2_payload_scene_sync
-              attaches/removes cube in MoveIt planning scene
+/arm2/vacuum_activate
 ```
 
-## Packages
+## 主要包
 
-- `rc_arm2_description`: URDF and meshes. The URDF defines `tool0` as a fixed link under `l4`.
-- `rc_arm2_control`: custom torque trajectory controller and MuJoCo simulator.
-- `arm2_moveit_config`: minimal MoveIt configuration, including SRDF, OMPL, joint limits, controller mapping, and launch files.
-- `rc_arm2_moveit_client`: task-level clients for 4D goal planning and payload planning-scene synchronization.
+- `rc_arm2_description`: URDF 和 mesh
+- `rc_arm2_control`: 力矩控制器与 MuJoCo 仿真
+- `arm2_moveit_config`: MoveIt 配置
+- `rc_arm2_moveit_client`: `/arm2_task_goal` action server 与 payload scene sync
+- `rc_arm2_middleware`: 抓取/放置/默认位宏动作状态机
+- `rc_arm2_bringup`: sim / real 启动入口
+- `rc_arm2_msgs`: 自定义消息
 
-## Important Frames And Interfaces
-
-- Planning group: `arm`
-- Controlled joints: `j1`, `j2`, `j3`, `j4`
-- End frame: `tool0`
-- Trajectory action: `/arm2_controller/follow_joint_trajectory`
-- Torque command topic: `/arm2/command/effort`
-- Joint state topic: `/joint_states`
-- Payload request topic: `/arm2/payload_attached`
-- Payload active topic: `/arm2/payload_active`
-
-`tool0` geometry is defined only in the URDF. Controller and MuJoCo read `tool0` from the model instead of using duplicated `tool0_xyz/tool0_rpy` YAML parameters.
-
-## Build
+## 构建
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon build --packages-select \
-  rc_arm2_description \
-  rc_arm2_control \
-  arm2_moveit_config \
-  rc_arm2_moveit_client \
-  rc_arm2_bringup
+colcon build
 source install/setup.bash
 ```
 
-## Start The System
+## 推荐启动
 
-If your LAN contains other ROS 2 machines publishing the same topic names such as `/joint_states`, run this workspace in localhost-only mode so discovery and traffic stay on the current machine:
+如果局域网里有别的 ROS 2 设备，建议每个终端先设置：
 
 ```bash
 export ROS_LOCALHOST_ONLY=1
 export ROS_DOMAIN_ID=42
 ```
 
-Use the same two environment variables in every terminal before launching nodes or using `ros2 topic/ros2 action` commands.
-
-Recommended sim bringup:
+### 仿真
 
 ```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_sim_system.launch.py
 ```
 
-Real hardware bringup:
+### 真机
 
 ```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_real_system.launch.py
 ```
 
-Headless sim:
+### 无界面仿真
 
 ```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
 ros2 launch rc_arm2_bringup arm2_sim_system.launch.py enable_viewer:=false
 ```
 
-Sim with RViz:
+## 直接发送 4D 任务目标
 
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch rc_arm2_bringup arm2_sim_system.launch.py start_rviz:=true
-```
-
-Manual startup for debugging:
-
-Terminal 1: start MuJoCo simulation and the custom torque controller.
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch rc_arm2_control arm2_sim_control.launch.py
-```
-
-For headless checks without the MuJoCo viewer:
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch rc_arm2_control arm2_sim_control.launch.py enable_viewer:=false
-```
-
-Terminal 2: start MoveIt.
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch arm2_moveit_config move_group.launch.py
-```
-
-Terminal 3: start the persistent 4D task goal action server.
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 run rc_arm2_moveit_client arm2_plan_to_task_goal
-```
-
-Terminal 4: synchronize payload collision geometry into the MoveIt planning scene.
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 run rc_arm2_moveit_client arm2_payload_scene_sync
-```
-
-Optional: start RViz.
-
-```bash
-export ROS_LOCALHOST_ONLY=1
-export ROS_DOMAIN_ID=42
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch arm2_moveit_config moveit_rviz.launch.py
-```
-
-## Plan A 4D Task Goal
-
-The supported task target is:
-
-```text
-target_xyz:  tool0 position in base_link, meters
-target_spin: tool0 rotation around its own +Z axis, radians
-planning_time: MoveIt planning time for this goal, seconds; use 0.0 to keep the node default
-```
-
-After `arm2_plan_to_task_goal` is running, send task goals with the `/arm2_task_goal` action.
-
-Planning only:
-
-```bash
-ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: false}"
-```
-
-Plan and execute:
+启动 bringup 后，可以直接调用 `/arm2_task_goal`：
 
 ```bash
 ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
   "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: true}"
 ```
 
-You can send another goal after the previous one finishes:
+目标含义：
+
+- `target_xyz`: `base_link` 坐标系下的 `[x, y, z]`，单位米
+- `target_spin`: `tool0` 绕自身 `+Z` 旋转，单位弧度
+- `planning_time`: MoveIt 规划时间
+- `execute`: `true` 执行，`false` 只规划
+
+## 使用 middleware
+
+`arm2_middleware` 不会默认随 bringup 启动，需要单独运行：
 
 ```bash
-ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.12, 0.02, 0.22], target_spin: 0.4, planning_time: 3.0, execute: true}"
+ros2 run rc_arm2_middleware arm2_middleware \
+  --ros-args \
+  --params-file src/rc_arm2_control/config/arm2_control.yaml
 ```
 
-The client refuses to execute if the MoveIt trajectory does not contain positions, velocities, and accelerations, because the torque controller requires complete `q`, `dq`, and `ddq`.
+### 输入
 
-## Payload Attach And Detach
+目标点：
 
-Request payload attach:
+```bash
+ros2 topic pub --once /arm2/middleware/target_point geometry_msgs/msg/Point \
+  "{x: 0.30, y: -0.05, z: 0.20}"
+```
+
+抓取：
+
+```bash
+ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
+  "{mode: 1, warehouse_index: -1, target_spin: 0.0}"
+```
+
+放置到仓库点 `0`：
+
+```bash
+ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
+  "{mode: 2, warehouse_index: 0, target_spin: 0.0}"
+```
+
+回默认点：
+
+```bash
+ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
+  "{mode: 3, warehouse_index: -1, target_spin: 0.0}"
+```
+
+查看 middleware 状态：
+
+```bash
+ros2 topic echo /arm2/middleware/state
+```
+
+说明：
+
+- `mode: 1` 是 `PICK`
+- `mode: 2` 是 `PLACE`
+- `mode: 3` 是 `DEFAULT`
+- `warehouse_index` 是 `0-based`
+- `PICK` 前必须先有目标点
+- middleware 出现流程错误时会先尝试回默认点
+
+## Payload 与吸盘
+
+手动切换动力学载荷：
 
 ```bash
 ros2 topic pub --once /arm2/payload_attached std_msgs/msg/Bool "{data: true}"
-```
-
-Request payload detach:
-
-```bash
 ros2 topic pub --once /arm2/payload_attached std_msgs/msg/Bool "{data: false}"
 ```
 
+手动开关吸盘：
 
-## Vacuum Gripper Enable and Disable
 ```bash
 ros2 topic pub /arm2/vacuum_activate std_msgs/msg/Bool "{data: true}" -1
-```
-
-```bash
 ros2 topic pub /arm2/vacuum_activate std_msgs/msg/Bool "{data: false}" -1
 ```
-The controller only applies payload model switching while in `HOLDING`. If a request arrives during trajectory execution, it is stored as pending and applied after the controller returns to `HOLDING`.
 
-When active:
+## 关键接口
 
-- Pinocchio uses the loaded dynamics model.
-- MuJoCo welds the cube to `tool0`.
-- MoveIt planning scene attaches a cube collision object to `tool0`.
+- `tool0`: 末端执行器 frame
+- `/arm2_task_goal`: 4D 任务目标 action
+- `/arm2_controller/follow_joint_trajectory`: 轨迹 action
+- `/arm2_controller/state`: 控制器状态
+- `/arm2/command/effort`: 力矩命令
+- `/joint_states`: 关节状态
+- `/arm2/payload_attached`: 请求切换载荷模型
+- `/arm2/payload_active`: 实际生效的载荷状态
+- `/arm2/vacuum_activate`: 吸盘控制
 
-## Configuration Files
+## 配置文件
 
-Controller and simulator:
+主要配置：
 
 - `src/rc_arm2_control/config/arm2_control.yaml`
 
-MoveIt:
+MoveIt 配置：
 
-- `src/arm2_moveit_config/config/arm2.srdf`
-- `src/arm2_moveit_config/config/joint_limits.yaml`
-- `src/arm2_moveit_config/config/ompl_planning.yaml`
-- `src/arm2_moveit_config/config/moveit_controllers.yaml`
-- `src/arm2_moveit_config/config/kinematics.yaml`
+- `src/arm2_moveit_config/config/`
 
-`kinematics.yaml` is intentionally empty in this phase. The arm is 4-DOF, so ordinary 6D MoveIt pose IK is not used. The project uses a custom 4D IK in `arm2_plan_to_task_goal`, then asks MoveIt to plan in joint space.
-
-## Quick Validation
-
-Build selected packages:
-
-```bash
-colcon build --packages-select rc_arm2_description rc_arm2_control arm2_moveit_config rc_arm2_moveit_client
-```
-
-Run a headless simulation/controller smoke test:
-
-```bash
-ros2 launch rc_arm2_control arm2_sim_control.launch.py enable_viewer:=false
-```
-
-In another terminal, send the old sample trajectory directly to the controller:
-
-```bash
-ros2 run rc_arm2_control send_sample_trajectory.py
-```
-
-Start the persistent 4D task goal server:
-
-```bash
-ros2 run rc_arm2_moveit_client arm2_plan_to_task_goal
-```
-
-Run MoveIt planning without execution:
-
-```bash
-ros2 action send_goal /arm2_task_goal rc_arm2_moveit_client/action/PlanToTaskGoal \
-  "{target_xyz: [0.10, -0.04, 0.24], target_spin: 0.0, planning_time: 5.0, execute: false}"
-```
-
-## Expected MoveIt Warnings
-
-MoveIt may print:
-
-```text
-No kinematics plugins defined. Fill and load kinematics.yaml!
-```
-
-This is expected in the current phase. We are not using MoveIt 6D pose IK; the 4D IK is implemented in `rc_arm2_moveit_client`.
-
-MoveIt may also print an Octomap sensor warning if no 3D sensor plugin is configured. This does not block joint-space planning.
+middleware 的点位、超时和命令话题也写在 `arm2_control.yaml` 里。

@@ -1,0 +1,31 @@
+int32 macro_state
+int32 MACRO_STATE_NONE=0
+int32 MACRO_STATE_PICK=1
+int32 MACRO_STATE_PLACE=2
+int32 MACRO_STATE_DEFAULT=3
+int32 MACRO_STATE_RECOVERING_DEFAULT=4
+
+int32 step_index
+bool busy
+bool in_error_recovery
+
+int32 last_error_code
+int32 ERROR_NONE=0
+int32 ERROR_BUSY_REJECTED=1
+int32 ERROR_NO_TARGET_POINT=2
+int32 ERROR_INVALID_WAREHOUSE_INDEX=3
+int32 ERROR_ACTION_SERVER_UNAVAILABLE=4
+int32 ERROR_ACTION_TIMEOUT=5
+int32 ERROR_PAYLOAD_WAIT_TIMEOUT=6
+int32 ERROR_CONTROLLER_FAULT=7
+int32 ERROR_GOAL_REJECTED=8
+int32 ERROR_INTERNAL_EXCEPTION=9
+int32 ERROR_DEFAULT_RECOVERY_FAILED=10
+
+int32 active_command_mode
+int32 warehouse_index
+int32 controller_state
+bool payload_active
+
+bool last_task_goal_success
+int32 last_task_goal_error_code

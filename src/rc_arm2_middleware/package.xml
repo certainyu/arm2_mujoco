@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rc_arm2_middleware</name>
+  <version>0.1.0</version>
+  <description>Business-level state machine middleware for coordinating arm2 task goals and payload handling.</description>
+  <maintainer email="aqua@example.com">aqua</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>ament_index_cpp</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_action</build_depend>
+  <build_depend>rc_arm2_moveit_client</build_depend>
+  <build_depend>rc_arm2_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+
+  <exec_depend>ament_index_cpp</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>rclcpp_action</exec_depend>
+  <exec_depend>rc_arm2_moveit_client</exec_depend>
+  <exec_depend>rc_arm2_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

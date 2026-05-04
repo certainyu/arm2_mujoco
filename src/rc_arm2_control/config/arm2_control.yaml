@@ -74,3 +74,29 @@ arm2_mujoco_sim:
     enable_viewer: true
     timestep: 0.001
     joint_state_rate_hz: 500.0
+
+arm2_middleware:
+  ros__parameters:
+    # 接收外部发布命令话题
+    command_topic: /arm2/middleware/command
+    # 视觉提供物体位置
+    target_point_topic: /arm2/middleware/target_point
+    # middle状态
+    middleware_state_topic: /arm2/middleware/state
+    # 命令动作接口
+    task_goal_action_name: /arm2_task_goal
+    planning_time: 5.0
+    action_server_timeout_sec: 2.0
+    action_result_timeout_sec: 30.0
+    payload_wait_timeout_sec: 5.0
+    # [x, y, z, spin]
+    # 暂存常量点位
+    staging_pose: [0.25, 0.5, 0.175, 0.0]
+    # 默认常量点位
+    default_pose: [0.19, 0.0, 0.242, 0.0]
+    # Flattened [x, y, z, spin] entries for 0-based warehouse indices.
+    warehouse_poses: [
+      0.25, -0.25, 0.175, 0.0,
+      0.25, 0.04, 0.175, 0.0,
+      0.25, 0.25, 0.175, 0.0
+    ]
