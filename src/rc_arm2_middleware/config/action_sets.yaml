@@ -2,8 +2,8 @@ action_sets:
   - id: 1
     name: pick_from_target
     steps:
-      - type: set_vacuum
-        label: vacuum_on
+      - type: set_vacuum # middleware使用type字段决定进那个case
+        label: vacuum_on # 注释描述，代码不使用
         enabled: true
 
       - type: move_target_offset

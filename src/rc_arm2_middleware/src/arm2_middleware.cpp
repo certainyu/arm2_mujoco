@@ -33,12 +33,25 @@ using Arm2ControllerState = rc_arm2_msgs::msg::Arm2ControllerState;
 using Arm2MiddlewareCommand = rc_arm2_msgs::msg::Arm2MiddlewareCommand;
 using Arm2MiddlewareState = rc_arm2_msgs::msg::Arm2MiddlewareState;
 
+// 枚举动作单元
 enum class StepType
 {
   NONE,
+  // 移动到目标点+offest[x,y,z],指定target_spin:
+  // 1目标点+offest[x,y,z],target_spin发布到命令动作接口 task_goal_action_name: /arm2_task_goal
+  // 完成标志：收到action返回，无论bool success=true/false
   MOVE_TARGET_OFFSET,
+  // 移动到自定点[x,y,z],指定target_spin
+  // 1自定点[x,y,z],指定target_spin发布到命令动作接口 task_goal_action_name: /arm2_task_goal
+  // 完成标志：收到action返回，无论bool success=true/false
   MOVE_FIXED_POSE,
+  // 切换吸盘为指定状态
+  // 发布吸盘状态切换ros2 topic pub /arm2/vacuum_activate std_msgs/msg/Bool "{data: true/falase}" -1
+  // 完成标志：无
   SET_VACUUM,
+  // 切换带载状态为指定状态
+  // 发布动力学状态切换：ros2 topic pub --once /arm2/payload_attached std_msgs/msg/Bool "{data: true/false}"
+  // 完成标志：订阅带载状态: /arm2/payload_active与发布状态一致
   SET_PAYLOAD,
 };
 
@@ -62,20 +75,26 @@ struct PendingTaskGoal
   TaskGoalRequest request{};
 };
 
+// 动作单元结构体
 struct ActionStep
 {
   StepType type{StepType::NONE};
   std::string label;
+  // 目标点（若有）
   std::array<double, 3> vector3{0.0, 0.0, 0.0};
   double target_spin{0.0};
+  // 轨迹预计算时间上限
   std::optional<double> planning_time;
+  // 状态切换（若有）
   bool bool_value{false};
 };
-
+// 动作集结构体
 struct ActionSet
 {
+  // 动作集序号
   int32_t id{0};
   std::string name;
+  // 动作集内的动作单元排列
   std::vector<ActionStep> steps;
 };
 
@@ -460,22 +479,31 @@ public:
   : Node("arm2_middleware")
   {
     const auto controller_topics = load_controller_topic_config();
-
+    // 接收命令话题
     command_topic_ = declare_parameter<std::string>("command_topic", "/arm2/middleware/command");
+    // 视觉提供的物体位置
     target_point_topic_ = declare_parameter<std::string>(
       "target_point_topic", "/arm2/middleware/target_point");
+    // 发布自身状态
     middleware_state_topic_ = declare_parameter<std::string>(
       "middleware_state_topic", "/arm2/middleware/state");
+    // 发布目标点到指定action
     task_goal_action_name_ = declare_parameter<std::string>(
       "task_goal_action_name", "/arm2_task_goal");
+    // 下层controller的状态
     controller_state_topic_ = declare_parameter<std::string>(
       "controller_state_topic", controller_topics.controller_state_topic);
+    // 接收负载状态话题
     payload_active_topic_ = declare_parameter<std::string>(
       "payload_active_topic", controller_topics.payload_active_topic);
+    // 发布期望负载状态话题 
     payload_command_topic_ = declare_parameter<std::string>(
       "payload_command_topic", controller_topics.payload_command_topic);
+    // 发布吸盘状态话题
     vacuum_activate_topic_ = declare_parameter<std::string>(
       "vacuum_activate_topic", controller_topics.vacuum_activate_topic);
+    
+    
     action_sets_config_path_ = declare_parameter<std::string>(
       "action_sets_config_path", "config/action_sets.yaml");
 
@@ -499,29 +527,37 @@ public:
 
     const auto resolved_action_sets_path = resolve_package_relative_path(
       "rc_arm2_middleware", action_sets_config_path_);
+    // 从包下的config/action_sets.yaml中获取动作集
     action_sets_ = load_action_sets_from_yaml(resolved_action_sets_path);
     for (const auto & action_set : action_sets_) {
       action_sets_by_id_[action_set.id] = &action_set;
     }
-
+    // 发布自身状态 "/arm2/middleware/state"
     state_pub_ = create_publisher<Arm2MiddlewareState>(middleware_state_topic_, 10);
+    // 发布期望负载状态话题 /arm2/payload_attached
     payload_command_pub_ = create_publisher<std_msgs::msg::Bool>(payload_command_topic_, 10);
+    // 发布吸盘状态话题 /arm2/vacuum_activate
     vacuum_activate_pub_ = create_publisher<std_msgs::msg::Bool>(vacuum_activate_topic_, 10);
 
+    // 视觉提供的物体位置 "/arm2/middleware/target_point"
     target_point_sub_ = create_subscription<geometry_msgs::msg::Point>(
       target_point_topic_, 10,
       std::bind(&Arm2MiddlewareNode::target_point_callback, this, std::placeholders::_1));
+    // 订阅命令 "/arm2/middleware/command" int32 action_set_id
     command_sub_ = create_subscription<Arm2MiddlewareCommand>(
       command_topic_, 10,
       std::bind(&Arm2MiddlewareNode::command_callback, this, std::placeholders::_1));
+    //结构化控制器状态 rc_arm2_msgs/msg/Arm2ControllerState /arm2_controller/state
     controller_state_sub_ = create_subscription<Arm2ControllerState>(
       controller_state_topic_, 10,
       std::bind(&Arm2MiddlewareNode::controller_state_callback, this, std::placeholders::_1));
+    // 当前使用的模型是带负载还是空载，/arm2/payload_active
     payload_active_sub_ = create_subscription<std_msgs::msg::Bool>(
       payload_active_topic_, 10,
       std::bind(&Arm2MiddlewareNode::payload_active_callback, this, std::placeholders::_1));
-
+    // 发布目标点动作接口
     task_goal_client_ = rclcpp_action::create_client<PlanToTaskGoal>(this, task_goal_action_name_);
+    // 状态机
     timer_ = create_wall_timer(
       std::chrono::milliseconds(100),
       std::bind(&Arm2MiddlewareNode::timer_callback, this));
@@ -536,7 +572,7 @@ public:
 
 private:
   /**
-   * @brief Cache the latest target point from the upstream perception topic.
+   * @brief 获取视觉的目标的位置（箱子侧面）
    *
    * @param msg Latest target point message.
    * @return None
@@ -555,12 +591,13 @@ private:
   /**
    * @brief Accept an action-set command and start the corresponding sequence when idle.
    *
-   * @param msg Command message that identifies the requested action set.
+   * @param msg Command message that identifies the requested action set. int32 
    * @return None
    */
   void command_callback(const Arm2MiddlewareCommand::SharedPtr msg)
   {
     try {
+      // 忙就拒绝新命令
       if (busy_) {
         last_error_code_ = Arm2MiddlewareState::ERROR_BUSY_REJECTED;
         RCLCPP_WARN(
@@ -570,8 +607,9 @@ private:
         publish_state();
         return;
       }
-
+      // 按序号查找
       const auto * action_set = lookup_action_set(msg->action_set_id);
+      // 检查存在
       if (action_set == nullptr) {
         active_action_set_id_ = msg->action_set_id;
         active_action_set_name_.clear();
@@ -583,7 +621,7 @@ private:
           "Unknown action_set_id=" + std::to_string(msg->action_set_id));
         return;
       }
-
+      // 设置为待执行
       start_action_set(*action_set);
     } catch (const std::exception & error) {
       abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
@@ -600,6 +638,7 @@ private:
   {
     try {
       latest_controller_state_ = *msg;
+      // 只有FAULT会停止当前执行
       if (busy_ && msg->controller_state == Arm2ControllerState::CONTROLLER_STATE_FAULT) {
         abort_execution(
           Arm2MiddlewareState::ERROR_CONTROLLER_FAULT,
@@ -613,7 +652,7 @@ private:
   }
 
   /**
-   * @brief Track the active payload model state and resume execution when a payload switch completes.
+   * @brief 检查期望负载状态与订阅负载状态是否一致
    *
    * @param msg Latest payload-active boolean message.
    * @return None
@@ -639,19 +678,21 @@ private:
 
   /**
    * @brief Poll asynchronous wait conditions for action-server readiness, action results, and payload switches.
-   *
+   * 状态机
    * @param None
    * @return None
    */
   void timer_callback()
   {
     try {
+      // 空闲
       if (wait_state_ == WaitState::IDLE) {
         return;
       }
-
+      // 计算已经过去时间
       const double elapsed = (now() - wait_started_).seconds();
       switch (wait_state_) {
+        // 等待action响应 2.0s
         case WaitState::WAITING_FOR_ACTION_SERVER:
           if (task_goal_client_->action_server_is_ready()) {
             if (!pending_task_goal_) {
@@ -671,6 +712,7 @@ private:
               "Timed out waiting for /arm2_task_goal action server");
           }
           return;
+        // 等待动作完成 30.0s
         case WaitState::WAITING_FOR_ACTION_RESULT:
           if (elapsed >= action_result_timeout_sec_) {
             abort_execution(
@@ -678,6 +720,7 @@ private:
               "Timed out waiting for /arm2_task_goal result");
           }
           return;
+        // 等待状态切换5.0s
         case WaitState::WAITING_FOR_PAYLOAD_STATE:
           if (elapsed >= payload_wait_timeout_sec_) {
             abort_execution(
@@ -686,6 +729,7 @@ private:
               (desired_payload_active_ ? "true" : "false"));
           }
           return;
+        // 动作集执行完成转空闲
         case WaitState::IDLE:
           return;
       }
@@ -706,6 +750,7 @@ private:
     if (match == action_sets_by_id_.end()) {
       return nullptr;
     }
+    // 返回动作集指针
     return match->second;
   }
 
@@ -725,6 +770,7 @@ private:
     active_step_label_.clear();
 
     wait_state_ = WaitState::IDLE;
+    // 自身状态更新
     executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
     busy_ = true;
     desired_payload_active_ = false;
@@ -737,18 +783,20 @@ private:
     last_action_set_success_ = true;
 
     publish_state();
+    // 阻塞循环
     advance_execution();
   }
 
   /**
    * @brief Drive the current action set forward until the next asynchronous wait point or completion.
-   *
+   * 执行动作集
    * @param None
    * @return None
    */
   void advance_execution()
   {
     while (busy_ && current_action_set_ != nullptr) {
+      // 结束
       if (active_step_index_ < 0 ||
         static_cast<std::size_t>(active_step_index_) >= current_action_set_->steps.size())
       {
@@ -823,31 +871,37 @@ private:
   void start_task_goal(const TaskGoalRequest & request)
   {
     if (task_goal_client_->action_server_is_ready()) {
+      // 向action发送目标
       dispatch_task_goal(request);
       return;
     }
-
+    // 暂存 request
     pending_task_goal_ = PendingTaskGoal{request};
+    // 等待action响应
     wait_state_ = WaitState::WAITING_FOR_ACTION_SERVER;
+    // 自身状态
     executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_WAITING_FOR_ACTION_SERVER;
+    // 开始等待action响应的时间
     wait_started_ = now();
     publish_state();
   }
 
   /**
    * @brief Send a resolved task goal to `/arm2_task_goal` and register result callbacks.
-   *
+   * 向action发送目标
    * @param request Fully resolved MoveIt task-goal request.
    * @return None
    */
   void dispatch_task_goal(const TaskGoalRequest & request)
   {
+    // 组装 action goal
     PlanToTaskGoal::Goal goal;
     goal.target_xyz = request.target_xyz;
     goal.target_spin = request.target_spin;
     goal.planning_time = request.planning_time;
     goal.execute = true;
 
+    // 递增 goal_sequence_，生成这次 goal 的唯一序号
     const std::uint64_t sequence = ++goal_sequence_;
     wait_state_ = WaitState::WAITING_FOR_ACTION_RESULT;
     executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_WAITING_FOR_ACTION_RESULT;
@@ -855,33 +909,43 @@ private:
     active_goal_handle_.reset();
     publish_state();
 
+    // 注册两个异步回调
     auto options = rclcpp_action::Client<PlanToTaskGoal>::SendGoalOptions();
+    // action 接受请求回调
     options.goal_response_callback =
       [this, sequence](GoalHandlePlanToTaskGoal::SharedPtr goal_handle)
       {
+        // 防止旧 goal 的延迟回调”污染当前状态。
+        // 比如 middleware 已经取消了旧动作、开始了新动作，那旧动作晚到的回调会因为序号不匹配被直接忽略。
         if (sequence != goal_sequence_) {
           return;
         }
+        // 如果 goal_handle 为空，说明 goal 被 action server 拒绝，直接 abort_execution(...)
         if (!goal_handle) {
           abort_execution(
             Arm2MiddlewareState::ERROR_GOAL_REJECTED,
             "Task goal was rejected by /arm2_task_goal");
           return;
         }
+        // 否则把 active_goal_handle_ 保存下来，后面如果要 cancel 就靠它 
         active_goal_handle_ = goal_handle;
       };
+    // action 完成请求回调
     options.result_callback =
       [this, sequence](const GoalHandlePlanToTaskGoal::WrappedResult & result)
       {
+        // 防止旧 goal 的延迟回调”污染当前状态。
+        // 比如 middleware 已经取消了旧动作、开始了新动作，那旧动作晚到的回调会因为序号不匹配被直接忽略。
         if (sequence != goal_sequence_) {
           return;
         }
-
+        // 收到最终结果后，先清掉等待状态
         active_goal_handle_.reset();
+        // 清空暂存 request
         pending_task_goal_.reset();
         wait_state_ = WaitState::IDLE;
         executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
-
+        // 记录这次action完成状态
         if (result.result) {
           last_move_success_ = result.result->success;
           last_move_error_code_ = result.result->error_code;
@@ -893,10 +957,12 @@ private:
           last_action_set_success_ = false;
         }
 
+        // 最后 ++active_step_index_，继续执行动作集合里的下一步 advance_execution()
         ++active_step_index_;
         advance_execution();
       };
-
+    // 真正异步发送 goal
+    // 注意它是异步的，所以函数本身不会阻塞等待，而是立刻返回，后续靠上面两个 callback 继续推进状态机。
     task_goal_client_->async_send_goal(goal, options);
   }
 
@@ -976,6 +1042,7 @@ private:
    */
   void invalidate_active_goal()
   {
+    // 递增序列号，之前的序列号将变成旧的，会在dispatch_task_goal中失效
     ++goal_sequence_;
     active_goal_handle_.reset();
   }
@@ -988,16 +1055,18 @@ private:
    */
   void finish_action_set()
   {
+    //转空闲
     busy_ = false;
     wait_state_ = WaitState::IDLE;
     desired_payload_active_ = false;
     pending_task_goal_.reset();
+    // 该动作集的序列号被失效
     invalidate_active_goal();
     current_action_set_ = nullptr;
     executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_IDLE;
     active_action_set_id_ = 0;
     active_action_set_name_.clear();
-    active_step_index_ = kIdleStepIndex;
+    active_step_index_ = kIdleStepIndex; // = -1
     active_step_type_ = StepType::NONE;
     active_step_label_.clear();
     publish_state();
@@ -1070,6 +1139,7 @@ private:
 
   const ActionSet * current_action_set_{nullptr};
   WaitState wait_state_{WaitState::IDLE};
+  // 自身状态
   int32_t executor_state_{Arm2MiddlewareState::EXECUTOR_STATE_IDLE};
   int32_t active_action_set_id_{0};
   std::string active_action_set_name_;
