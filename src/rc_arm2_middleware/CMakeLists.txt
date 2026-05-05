@@ -13,6 +13,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(rc_arm2_moveit_client REQUIRED)
 find_package(rc_arm2_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_executable(arm2_middleware
   src/arm2_middleware.cpp
@@ -27,9 +28,14 @@ ament_target_dependencies(arm2_middleware
   rc_arm2_msgs
   std_msgs
 )
+target_link_libraries(arm2_middleware yaml-cpp)
 
 install(TARGETS arm2_middleware
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(FILES README.md

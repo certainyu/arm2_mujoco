@@ -1,26 +1,18 @@
 # rc_arm2_middleware
 
-`arm2_middleware` 是一个业务层状态机节点，用来把：
+`arm2_middleware` is a YAML-driven action-set executor for arm2. It subscribes to:
 
-- 目标点输入
-- 抓取 / 放置 / 回默认命令
-- `/arm2_task_goal` action
-- `/arm2_controller/state`
-- `/arm2/payload_active`
+- target points from `/arm2/middleware/target_point`
+- controller state from `/arm2_controller/state`
+- payload model state from `/arm2/payload_active`
 
-串起来，执行完整的宏动作流程。
+It coordinates those inputs with:
 
-## 依赖
+- `/arm2_task_goal`
+- `/arm2/payload_attached`
+- `/arm2/vacuum_activate`
 
-启动前需要先有这些节点在线：
-
-- `arm2_torque_trajectory_controller`
-- `arm2_plan_to_task_goal`
-- `move_group`
-
-也就是说，通常先启动整套 bringup，再单独启动 middleware。
-
-## 启动
+## Startup
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -30,102 +22,95 @@ ros2 run rc_arm2_middleware arm2_middleware \
   --params-file src/rc_arm2_control/config/arm2_control.yaml
 ```
 
-## 输入接口
+The action-set file is configured by `arm2_middleware.ros__parameters.action_sets_config_path`.
+Relative paths are resolved against the `rc_arm2_middleware` package share directory.
 
-目标点：
-
-- topic: `/arm2/middleware/target_point`
-- type: `geometry_msgs/msg/Point`
-
-命令：
+## Command Interface
 
 - topic: `/arm2/middleware/command`
 - type: `rc_arm2_msgs/msg/Arm2MiddlewareCommand`
 
-命令模式：
+```text
+int32 action_set_id
+```
 
-- `0`: `NONE`
-- `1`: `PICK`
-- `2`: `PLACE`
-- `3`: `DEFAULT`
+Example:
 
-## 输出接口
+```bash
+ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
+  "{action_set_id: 1}"
+```
 
-状态：
+## State Interface
 
 - topic: `/arm2/middleware/state`
 - type: `rc_arm2_msgs/msg/Arm2MiddlewareState`
 
-middleware 还会主动使用这些底层接口：
+The state message reports the current executor state, active action set and step, cached target point,
+mirrored controller state, payload status, and the last move/action-set result.
 
-- action: `/arm2_task_goal`
-- topic: `/arm2/payload_attached`
-- topic: `/arm2/vacuum_activate`
+## Target Point Input
 
-## 常用命令
+- topic: `/arm2/middleware/target_point`
+- type: `geometry_msgs/msg/Point`
 
-发送目标点：
+Example:
 
 ```bash
 ros2 topic pub --once /arm2/middleware/target_point geometry_msgs/msg/Point \
   "{x: 0.30, y: -0.05, z: 0.20}"
 ```
 
-抓取：
+## YAML Schema
 
-```bash
-ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
-  "{mode: 1, warehouse_index: -1, target_spin: 0.0}"
+Action sets live in `config/action_sets.yaml`:
+
+```yaml
+action_sets:
+  - id: 1
+    name: pick_from_target
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+      - type: move_target_offset
+        label: approach_target
+        offset_xyz: [0.0, 0.0, 0.05]
+        target_spin: 0.0
+        planning_time: 5.0
+      - type: set_payload
+        label: attach_payload
+        attached: true
 ```
 
-放置到仓库点 `0`：
+Supported step types:
 
-```bash
-ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
-  "{mode: 2, warehouse_index: 0, target_spin: 0.0}"
-```
+- `move_target_offset`
+  - required: `offset_xyz`, `target_spin`
+  - optional: `planning_time`
+- `move_fixed_pose`
+  - required: `xyz`, `target_spin`
+  - optional: `planning_time`
+- `set_vacuum`
+  - required: `enabled`
+- `set_payload`
+  - required: `attached`
 
-回默认点：
+Validation rules:
 
-```bash
-ros2 topic pub --once /arm2/middleware/command rc_arm2_msgs/msg/Arm2MiddlewareCommand \
-  "{mode: 3, warehouse_index: -1, target_spin: 0.0}"
-```
+- `action_sets` must be a non-empty list
+- each set needs a unique integer `id`
+- each set needs a non-empty `name`
+- each set needs a non-empty `steps`
+- vector fields must contain exactly 3 floats
+- `planning_time`, if present, must be positive
 
-查看状态：
+## Runtime Behavior
 
-```bash
-ros2 topic echo /arm2/middleware/state
-```
-
-## 参数
-
-middleware 参数写在：
-
-- `src/rc_arm2_control/config/arm2_control.yaml`
-- 节点段：`arm2_middleware.ros__parameters`
-
-重点参数：
-
-- `planning_time`
-- `action_server_timeout_sec`
-- `action_result_timeout_sec`
-- `payload_wait_timeout_sec`
-- `staging_pose`
-- `default_pose`
-- `warehouse_poses`
-
-位姿格式统一为：
-
-```text
-[x, y, z, spin]
-```
-
-其中位置单位为米，`spin` 单位为弧度。
-
-## 行为说明
-
-- `PICK` 前必须先收到目标点，否则会进入错误恢复。
-- `PLACE` 的 `warehouse_index` 使用 `0-based`。
-- 切到带载、切回卸载，都会等待 `/arm2/payload_active` 确认。
-- 发生流程错误时，middleware 会先尝试回默认点，再自动回空闲。
+- Only one action set can run at a time.
+- A second command received while busy is rejected with `ERROR_BUSY_REJECTED`.
+- `move_target_offset` uses the latest cached target point when that step begins.
+- Move steps advance when the action returns, even if `success=false`.
+- `set_payload` waits until `/arm2/payload_active` matches the requested value.
+- The current action set aborts immediately on controller `FAULT`, action timeouts, goal rejection,
+  missing target point, or invalid action-set selection.

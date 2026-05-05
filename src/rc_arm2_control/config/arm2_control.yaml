@@ -64,7 +64,7 @@ arm2_torque_trajectory_controller:
 
 arm2_mujoco_real:
   ros__parameters:
-    # 与 URDF 正方向一致的关节方向系数；真机中 j2、j4 需要取反。
+    # 与 URDF 正方向一致的关节方向系数；真机中 j4 需要取反。
     joint_directions: [1, 1, 1, -1]
     vacuum_activate_topic: /arm2/vacuum_activate
 
@@ -89,14 +89,5 @@ arm2_middleware:
     action_server_timeout_sec: 2.0
     action_result_timeout_sec: 30.0
     payload_wait_timeout_sec: 5.0
-    # [x, y, z, spin]
-    # 暂存常量点位
-    staging_pose: [0.25, 0.5, 0.175, 0.0]
-    # 默认常量点位
-    default_pose: [0.19, 0.0, 0.242, 0.0]
-    # Flattened [x, y, z, spin] entries for 0-based warehouse indices.
-    warehouse_poses: [
-      0.25, -0.25, 0.175, 0.0,
-      0.25, 0.04, 0.175, 0.0,
-      0.25, 0.25, 0.175, 0.0
-    ]
+    # 相对路径将基于 rc_arm2_middleware 包 share 目录解析
+    action_sets_config_path: config/action_sets.yaml

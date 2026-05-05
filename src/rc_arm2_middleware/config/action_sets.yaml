@@ -1,0 +1,46 @@
+action_sets:
+  - id: 1
+    name: pick_from_target
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+      - type: move_target_offset
+        label: approach_target
+        offset_xyz: [0.0, 0.0, 0.05]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_target_offset
+        label: descend_to_target
+        offset_xyz: [0.0, 0.0, 0.0]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: lift_to_safe_pose
+        xyz: [0.25, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 2
+    name: place_to_fixed_pose
+    steps:
+      - type: move_fixed_pose
+        label: move_to_place
+        xyz: [0.30, -0.10, 0.20]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: set_payload
+        label: detach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false

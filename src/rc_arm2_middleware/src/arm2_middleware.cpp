@@ -2,7 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <exception>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -17,14 +17,15 @@
 #include "rc_arm2_msgs/msg/arm2_controller_state.hpp"
 #include "rc_arm2_msgs/msg/arm2_middleware_command.hpp"
 #include "rc_arm2_msgs/msg/arm2_middleware_state.hpp"
+#include "rclcpp/parameter_map.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
-#include "rclcpp/parameter_map.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "yaml-cpp/yaml.h"
 
 namespace
 {
-constexpr int kIdleStep = -1;
+constexpr int kIdleStepIndex = -1;
 
 using PlanToTaskGoal = rc_arm2_moveit_client::action::PlanToTaskGoal;
 using GoalHandlePlanToTaskGoal = rclcpp_action::ClientGoalHandle<PlanToTaskGoal>;
@@ -32,33 +33,52 @@ using Arm2ControllerState = rc_arm2_msgs::msg::Arm2ControllerState;
 using Arm2MiddlewareCommand = rc_arm2_msgs::msg::Arm2MiddlewareCommand;
 using Arm2MiddlewareState = rc_arm2_msgs::msg::Arm2MiddlewareState;
 
-struct Pose4D
+enum class StepType
 {
-  double x{0.0};
-  double y{0.0};
-  double z{0.0};
-  double spin{0.0};
+  NONE,
+  MOVE_TARGET_OFFSET,
+  MOVE_FIXED_POSE,
+  SET_VACUUM,
+  SET_PAYLOAD,
 };
 
-/**
- * @brief 暂存一个尚未真正发送出去的 `/arm2_task_goal` 目标。
- *
- * @details
- * 当 middleware 需要等待 action server 变为可用时，会先把目标位姿放进这个结构体，
- * 待 server 可用后再真正发出 goal。
- */
+enum class WaitState
+{
+  IDLE,
+  WAITING_FOR_ACTION_SERVER,
+  WAITING_FOR_ACTION_RESULT,
+  WAITING_FOR_PAYLOAD_STATE,
+};
+
+struct TaskGoalRequest
+{
+  std::array<double, 3> target_xyz{0.0, 0.0, 0.0};
+  double target_spin{0.0};
+  double planning_time{5.0};
+};
+
 struct PendingTaskGoal
 {
-  Pose4D pose{};
+  TaskGoalRequest request{};
 };
 
-/**
- * @brief 保存 middleware 需要复用的底层 topic 名称。
- *
- * @details
- * 这些 topic 会从 `arm2_control.yaml` 的其他节点参数中读取，
- * 这样 middleware 不需要在自己的参数段里重复声明同一组通信接口。
- */
+struct ActionStep
+{
+  StepType type{StepType::NONE};
+  std::string label;
+  std::array<double, 3> vector3{0.0, 0.0, 0.0};
+  double target_spin{0.0};
+  std::optional<double> planning_time;
+  bool bool_value{false};
+};
+
+struct ActionSet
+{
+  int32_t id{0};
+  std::string name;
+  std::vector<ActionStep> steps;
+};
+
 struct ControllerTopicConfig
 {
   std::string controller_state_topic{"/arm2_controller/state"};
@@ -68,52 +88,11 @@ struct ControllerTopicConfig
 };
 
 /**
- * @brief 将长度为 4 的参数数组解析为一个 4D 位姿。
+ * @brief Find the parameter list for a specific node inside a parsed ROS parameter map.
  *
- * @param values 输入数组，顺序必须为 `[x, y, z, spin]`。
- * @param name 参数名，仅用于报错信息。
- * @return Pose4D 解析后的 4D 位姿结构体。
- *
- * @throw std::runtime_error 当数组长度不是 4 时抛出。
- */
-Pose4D parse_pose4(const std::vector<double> & values, const std::string & name)
-{
-  if (values.size() != 4U) {
-    throw std::runtime_error(name + " must contain exactly 4 values");
-  }
-  return Pose4D{values[0], values[1], values[2], values[3]};
-}
-
-/**
- * @brief 将扁平的 pose 数组解析为多个 4D 位姿。
- *
- * @param values 输入数组，格式为连续的 `[x, y, z, spin, ...]`。
- * @param name 参数名，仅用于报错信息。
- * @return std::vector<Pose4D> 解析后的位姿列表。
- *
- * @throw std::runtime_error 当数组长度不是 4 的整数倍时抛出。
- */
-std::vector<Pose4D> parse_pose4_list(const std::vector<double> & values, const std::string & name)
-{
-  if (values.size() % 4U != 0U) {
-    throw std::runtime_error(name + " length must be a multiple of 4");
-  }
-  std::vector<Pose4D> out;
-  out.reserve(values.size() / 4U);
-  for (std::size_t i = 0; i < values.size(); i += 4U) {
-    out.push_back(Pose4D{values[i], values[i + 1U], values[i + 2U], values[i + 3U]});
-  }
-  return out;
-}
-
-/**
- * @brief 在 YAML 参数映射中查找某个节点对应的参数列表。
- *
- * @param parameter_map 由整份 YAML 文件解析得到的参数映射。
- * @param node_name 目标节点名，例如 `arm2_torque_trajectory_controller`。
- * @return const std::vector<rclcpp::Parameter> & 该节点下的参数列表引用。
- *
- * @throw std::runtime_error 当找不到对应节点参数段时抛出。
+ * @param parameter_map Parsed parameter map loaded from a YAML file.
+ * @param node_name Target node name to search for.
+ * @return const std::vector<rclcpp::Parameter> & Parameters that belong to the requested node.
  */
 const std::vector<rclcpp::Parameter> & find_node_parameters(
   const rclcpp::ParameterMap & parameter_map,
@@ -134,13 +113,11 @@ const std::vector<rclcpp::Parameter> & find_node_parameters(
 }
 
 /**
- * @brief 在一个节点参数列表中查找指定字符串参数。
+ * @brief Look up a required string parameter from a node parameter list.
  *
- * @param parameters 某个节点的参数列表。
- * @param name 待查找的参数名。
- * @return std::string 参数值。
- *
- * @throw std::runtime_error 当参数不存在时抛出。
+ * @param parameters Parameter list for one node.
+ * @param name Name of the required string parameter.
+ * @return std::string The parsed string parameter value.
  */
 std::string lookup_string_parameter(
   const std::vector<rclcpp::Parameter> & parameters,
@@ -156,17 +133,11 @@ std::string lookup_string_parameter(
 }
 
 /**
- * @brief 从 `arm2_control.yaml` 中读取 middleware 需要复用的底层 topic 配置。
+ * @brief Load controller-related topic names that middleware reuses from the shared control config.
  *
- * @details
- * 其中：
- * - `controller_state_topic`、`payload_active_topic`、`payload_command_topic`
- *   读取自 `arm2_torque_trajectory_controller`
- * - `vacuum_activate_topic` 读取自 `arm2_mujoco_real`
- *
- * @return ControllerTopicConfig 解析后的 topic 配置结构体。
- *
- * @throw std::runtime_error 当 YAML 缺少必需参数段或参数项时抛出。
+ * @param None
+ * @return ControllerTopicConfig Topic names used for controller state, payload state, payload command,
+ * and vacuum command.
  */
 ControllerTopicConfig load_controller_topic_config()
 {
@@ -185,80 +156,334 @@ ControllerTopicConfig load_controller_topic_config()
   config.vacuum_activate_topic = lookup_string_parameter(real_parameters, "vacuum_activate_topic");
   return config;
 }
+
+/**
+ * @brief Resolve a configured path against a package share directory when the path is relative.
+ *
+ * @param package_name Package whose share directory is used as the base for relative paths.
+ * @param configured_path Absolute path or package-relative path from configuration.
+ * @return std::filesystem::path Resolved filesystem path.
+ */
+std::filesystem::path resolve_package_relative_path(
+  const std::string & package_name,
+  const std::string & configured_path)
+{
+  if (configured_path.empty()) {
+    throw std::runtime_error("Configured path must not be empty");
+  }
+
+  const std::filesystem::path path(configured_path);
+  if (path.is_absolute()) {
+    return path;
+  }
+  return std::filesystem::path(ament_index_cpp::get_package_share_directory(package_name)) / path;
+}
+
+/**
+ * @brief Fetch a required YAML map entry.
+ *
+ * @param node YAML map node that should contain the requested key.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return YAML::Node The requested YAML node.
+ */
+YAML::Node require_map_entry(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  const auto value = node[key];
+  if (!value) {
+    throw std::runtime_error(context + " is missing required key '" + key + "'");
+  }
+  return value;
+}
+
+/**
+ * @brief Read a required non-empty string value from a YAML map.
+ *
+ * @param node YAML map node that contains the value.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return std::string Parsed non-empty string.
+ */
+std::string require_string(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  const auto value = require_map_entry(node, key, context);
+  const auto parsed = value.as<std::string>();
+  if (parsed.empty()) {
+    throw std::runtime_error(context + " key '" + key + "' must not be empty");
+  }
+  return parsed;
+}
+
+/**
+ * @brief Read a required int32 value from a YAML map.
+ *
+ * @param node YAML map node that contains the value.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return int32_t Parsed integer value.
+ */
+int32_t require_int32(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  return require_map_entry(node, key, context).as<int32_t>();
+}
+
+/**
+ * @brief Read a required boolean value from a YAML map.
+ *
+ * @param node YAML map node that contains the value.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return bool Parsed boolean value.
+ */
+bool require_bool(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  return require_map_entry(node, key, context).as<bool>();
+}
+
+/**
+ * @brief Read a required floating-point value from a YAML map.
+ *
+ * @param node YAML map node that contains the value.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return double Parsed floating-point value.
+ */
+double require_double(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  return require_map_entry(node, key, context).as<double>();
+}
+
+/**
+ * @brief Read an optional positive floating-point value from a YAML map.
+ *
+ * @param node YAML map node that may contain the value.
+ * @param key Optional key name.
+ * @param context Human-readable path used in error messages.
+ * @return std::optional<double> Parsed positive value when present, otherwise `std::nullopt`.
+ */
+std::optional<double> optional_positive_double(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  const auto value = node[key];
+  if (!value) {
+    return std::nullopt;
+  }
+  const double parsed = value.as<double>();
+  if (parsed <= 0.0) {
+    throw std::runtime_error(context + " key '" + key + "' must be positive");
+  }
+  return parsed;
+}
+
+/**
+ * @brief Read a required 3-element vector from a YAML map.
+ *
+ * @param node YAML map node that contains the vector.
+ * @param key Required key name.
+ * @param context Human-readable path used in error messages.
+ * @return std::array<double, 3> Parsed three-dimensional vector.
+ */
+std::array<double, 3> require_vector3(
+  const YAML::Node & node,
+  const char * key,
+  const std::string & context)
+{
+  const auto value = require_map_entry(node, key, context);
+  if (!value.IsSequence() || value.size() != 3U) {
+    throw std::runtime_error(context + " key '" + key + "' must be a 3-element sequence");
+  }
+  return {value[0].as<double>(), value[1].as<double>(), value[2].as<double>()};
+}
+
+/**
+ * @brief Convert a YAML step type string into the internal step enum.
+ *
+ * @param type_name Step type string from the YAML config.
+ * @return StepType Internal step type enum value.
+ */
+StepType parse_step_type(const std::string & type_name)
+{
+  if (type_name == "move_target_offset") {
+    return StepType::MOVE_TARGET_OFFSET;
+  }
+  if (type_name == "move_fixed_pose") {
+    return StepType::MOVE_FIXED_POSE;
+  }
+  if (type_name == "set_vacuum") {
+    return StepType::SET_VACUUM;
+  }
+  if (type_name == "set_payload") {
+    return StepType::SET_PAYLOAD;
+  }
+  throw std::runtime_error("Unsupported action step type '" + type_name + "'");
+}
+
+/**
+ * @brief Convert an internal step type into the middleware state message constant.
+ *
+ * @param type Internal step type enum.
+ * @return int32_t Matching `Arm2MiddlewareState::STEP_TYPE_*` constant.
+ */
+int32_t step_type_to_msg(const StepType type)
+{
+  switch (type) {
+    case StepType::NONE:
+      return Arm2MiddlewareState::STEP_TYPE_NONE;
+    case StepType::MOVE_TARGET_OFFSET:
+      return Arm2MiddlewareState::STEP_TYPE_MOVE_TARGET_OFFSET;
+    case StepType::MOVE_FIXED_POSE:
+      return Arm2MiddlewareState::STEP_TYPE_MOVE_FIXED_POSE;
+    case StepType::SET_VACUUM:
+      return Arm2MiddlewareState::STEP_TYPE_SET_VACUUM;
+    case StepType::SET_PAYLOAD:
+      return Arm2MiddlewareState::STEP_TYPE_SET_PAYLOAD;
+  }
+  return Arm2MiddlewareState::STEP_TYPE_NONE;
+}
+
+/**
+ * @brief Load and validate all action sets from the middleware YAML config file.
+ *
+ * @param config_path Filesystem path to the action-set YAML file.
+ * @return std::vector<ActionSet> Fully parsed action-set definitions.
+ */
+std::vector<ActionSet> load_action_sets_from_yaml(const std::filesystem::path & config_path)
+{
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(config_path.string());
+  } catch (const YAML::Exception & error) {
+    throw std::runtime_error(
+            "Failed to load action set config '" + config_path.string() + "': " + error.what());
+  }
+
+  const auto action_sets_node = root["action_sets"];
+  if (!action_sets_node || !action_sets_node.IsSequence() || action_sets_node.size() == 0U) {
+    throw std::runtime_error("action_sets must exist and contain at least one entry");
+  }
+
+  std::unordered_map<int32_t, bool> seen_ids;
+  std::vector<ActionSet> action_sets;
+  action_sets.reserve(action_sets_node.size());
+
+  for (std::size_t set_index = 0; set_index < action_sets_node.size(); ++set_index) {
+    const auto action_set_node = action_sets_node[set_index];
+    const std::string set_context = "action_sets[" + std::to_string(set_index) + "]";
+
+    ActionSet action_set;
+    action_set.id = require_int32(action_set_node, "id", set_context);
+    action_set.name = require_string(action_set_node, "name", set_context);
+    if (seen_ids.count(action_set.id) != 0U) {
+      throw std::runtime_error("Duplicate action set id " + std::to_string(action_set.id));
+    }
+    seen_ids[action_set.id] = true;
+
+    const auto steps_node = require_map_entry(action_set_node, "steps", set_context);
+    if (!steps_node.IsSequence() || steps_node.size() == 0U) {
+      throw std::runtime_error(set_context + " steps must be a non-empty sequence");
+    }
+
+    action_set.steps.reserve(steps_node.size());
+    for (std::size_t step_index = 0; step_index < steps_node.size(); ++step_index) {
+      const auto step_node = steps_node[step_index];
+      const std::string step_context =
+        set_context + ".steps[" + std::to_string(step_index) + "]";
+
+      ActionStep step;
+      step.type = parse_step_type(require_string(step_node, "type", step_context));
+
+      const auto label_node = step_node["label"];
+      if (label_node) {
+        step.label = label_node.as<std::string>();
+      }
+
+      switch (step.type) {
+        case StepType::MOVE_TARGET_OFFSET:
+          step.vector3 = require_vector3(step_node, "offset_xyz", step_context);
+          step.target_spin = require_double(step_node, "target_spin", step_context);
+          step.planning_time = optional_positive_double(step_node, "planning_time", step_context);
+          break;
+        case StepType::MOVE_FIXED_POSE:
+          step.vector3 = require_vector3(step_node, "xyz", step_context);
+          step.target_spin = require_double(step_node, "target_spin", step_context);
+          step.planning_time = optional_positive_double(step_node, "planning_time", step_context);
+          break;
+        case StepType::SET_VACUUM:
+          step.bool_value = require_bool(step_node, "enabled", step_context);
+          break;
+        case StepType::SET_PAYLOAD:
+          step.bool_value = require_bool(step_node, "attached", step_context);
+          break;
+        case StepType::NONE:
+          break;
+      }
+      action_set.steps.push_back(std::move(step));
+    }
+
+    action_sets.push_back(std::move(action_set));
+  }
+
+  return action_sets;
+}
 }  // namespace
 
 /**
- * @brief arm2 中间层业务状态机节点。
- *
- * @details
- * 该节点把点位命令、底层控制器状态、带载状态和 `/arm2_task_goal` action
- * 串联起来，实现抓取、放置、回默认以及错误恢复回默认的宏动作流程。
+ * @brief Middleware node that executes YAML-defined action sets against MoveIt and controller topics.
  */
 class Arm2MiddlewareNode : public rclcpp::Node
 {
 public:
   /**
-   * @brief 构造 middleware 节点并完成所有接口初始化。
+   * @brief Construct the middleware node, load configuration, and initialize ROS interfaces.
    *
-   * @details
-   * 构造函数会：
-   * - 读取 middleware 自身参数与底层 topic 配置
-   * - 解析默认点、暂存点、仓库点
-   * - 创建状态发布、命令发布、订阅器、action client 和定时器
-   *
-   * @return void 无返回值。
-   *
-   * @throw std::runtime_error 当参数非法或必需配置缺失时抛出。
+   * @param None
+   * @return None
    */
   Arm2MiddlewareNode()
   : Node("arm2_middleware")
   {
     const auto controller_topics = load_controller_topic_config();
-    // 接收外部发布命令话题 command_topic: /arm2/middleware/command
-    command_topic_ = declare_parameter<std::string>("command_topic", 
-      "/arm2/middleware/command");
-    // 订阅视觉提供物体位置 target_point_topic: /arm2/middleware/target_point
-    target_point_topic_ = declare_parameter<std::string>("target_point_topic", 
-      "/arm2/middleware/target_point");
-    // 发布middle状态 middleware_state_topic: /arm2/middleware/state
+
+    command_topic_ = declare_parameter<std::string>("command_topic", "/arm2/middleware/command");
+    target_point_topic_ = declare_parameter<std::string>(
+      "target_point_topic", "/arm2/middleware/target_point");
     middleware_state_topic_ = declare_parameter<std::string>(
       "middleware_state_topic", "/arm2/middleware/state");
-    // 发布命令动作接口
-    task_goal_action_name_ = declare_parameter<std::string>("task_goal_action_name", 
-      "/arm2_task_goal");
-    // 订阅机械臂状态 /arm2_controller/state 自定义接口：rc_arm2_msgs/msg/Arm2ControllerState
+    task_goal_action_name_ = declare_parameter<std::string>(
+      "task_goal_action_name", "/arm2_task_goal");
     controller_state_topic_ = declare_parameter<std::string>(
       "controller_state_topic", controller_topics.controller_state_topic);
-    // 订阅/arm2/payload_active 机械臂使用的模型是带负载还是空载
     payload_active_topic_ = declare_parameter<std::string>(
       "payload_active_topic", controller_topics.payload_active_topic);
-    // 发布/arm2/payload_attached 希望使用的模型是带负载还是空载
     payload_command_topic_ = declare_parameter<std::string>(
       "payload_command_topic", controller_topics.payload_command_topic);
-    // 发布/arm2/vacuum_activate 开关吸盘
     vacuum_activate_topic_ = declare_parameter<std::string>(
       "vacuum_activate_topic", controller_topics.vacuum_activate_topic);
+    action_sets_config_path_ = declare_parameter<std::string>(
+      "action_sets_config_path", "config/action_sets.yaml");
 
     planning_time_ = declare_parameter<double>("planning_time", 5.0);
     action_server_timeout_sec_ = declare_parameter<double>("action_server_timeout_sec", 2.0);
     action_result_timeout_sec_ = declare_parameter<double>("action_result_timeout_sec", 30.0);
     payload_wait_timeout_sec_ = declare_parameter<double>("payload_wait_timeout_sec", 5.0);
 
-    // 暂存点位
-    staging_pose_ = parse_pose4(
-      declare_parameter<std::vector<double>>("staging_pose", std::vector<double>{0.18, -0.04, 0.24, 0.0}),
-      "staging_pose");
-    // 默认（初始）点位
-    default_pose_ = parse_pose4(
-      declare_parameter<std::vector<double>>("default_pose", std::vector<double>{0.10, -0.04, 0.24, 0.0}),
-      "default_pose");
-    //仓库点位
-    warehouse_poses_ = parse_pose4_list(
-      declare_parameter<std::vector<double>>(
-        "warehouse_poses",
-        std::vector<double>{0.25, -0.12, 0.24, 0.0, 0.25, 0.04, 0.24, 0.0}),
-      "warehouse_poses");
-    
     if (planning_time_ <= 0.0) {
       throw std::runtime_error("planning_time must be positive");
     }
@@ -271,35 +496,32 @@ public:
     if (payload_wait_timeout_sec_ <= 0.0) {
       throw std::runtime_error("payload_wait_timeout_sec must be positive");
     }
-    if (warehouse_poses_.empty()) {
-      throw std::runtime_error("warehouse_poses must contain at least one pose");
+
+    const auto resolved_action_sets_path = resolve_package_relative_path(
+      "rc_arm2_middleware", action_sets_config_path_);
+    action_sets_ = load_action_sets_from_yaml(resolved_action_sets_path);
+    for (const auto & action_set : action_sets_) {
+      action_sets_by_id_[action_set.id] = &action_set;
     }
-    // 发布middle状态 middleware_state_topic: /arm2/middleware/state
+
     state_pub_ = create_publisher<Arm2MiddlewareState>(middleware_state_topic_, 10);
-    // 发布/arm2/payload_attached 当前使用的模型是带负载还是空载
     payload_command_pub_ = create_publisher<std_msgs::msg::Bool>(payload_command_topic_, 10);
-    // 发布/arm2/vacuum_activate 开关吸盘
     vacuum_activate_pub_ = create_publisher<std_msgs::msg::Bool>(vacuum_activate_topic_, 10);
-    // 订阅视觉提供物体位置 target_point_topic: /arm2/middleware/target_point
+
     target_point_sub_ = create_subscription<geometry_msgs::msg::Point>(
       target_point_topic_, 10,
       std::bind(&Arm2MiddlewareNode::target_point_callback, this, std::placeholders::_1));
-    // 接收外部发布命令话题 command_topic: /arm2/middleware/command
     command_sub_ = create_subscription<Arm2MiddlewareCommand>(
       command_topic_, 10,
       std::bind(&Arm2MiddlewareNode::command_callback, this, std::placeholders::_1));
-    // 订阅机械臂状态 /arm2_controller/state 自定义接口：rc_arm2_msgs/msg/Arm2ControllerState
     controller_state_sub_ = create_subscription<Arm2ControllerState>(
       controller_state_topic_, 10,
       std::bind(&Arm2MiddlewareNode::controller_state_callback, this, std::placeholders::_1));
-    // 订阅/arm2/payload_active 当前使用的模型是带负载还是空载
     payload_active_sub_ = create_subscription<std_msgs::msg::Bool>(
       payload_active_topic_, 10,
       std::bind(&Arm2MiddlewareNode::payload_active_callback, this, std::placeholders::_1));
-    
-    // 命令动作接口
+
     task_goal_client_ = rclcpp_action::create_client<PlanToTaskGoal>(this, task_goal_action_name_);
-    // 周期性检查等待中的异步事件是否已就绪或超时。
     timer_ = create_wall_timer(
       std::chrono::milliseconds(100),
       std::bind(&Arm2MiddlewareNode::timer_callback, this));
@@ -307,36 +529,17 @@ public:
     publish_state();
     RCLCPP_INFO(
       get_logger(),
-      "arm2_middleware ready. command_topic=%s target_point_topic=%s action=%s",
-      command_topic_.c_str(), target_point_topic_.c_str(), task_goal_action_name_.c_str());
+      "arm2_middleware ready. command_topic=%s target_point_topic=%s action=%s action_sets=%s",
+      command_topic_.c_str(), target_point_topic_.c_str(), task_goal_action_name_.c_str(),
+      resolved_action_sets_path.string().c_str());
   }
 
 private:
-  enum class MacroState
-  {
-    NONE, //无
-    PICK, //抓取
-    PLACE,//放置
-    DEFAULT,//默认位置
-    RECOVERING_DEFAULT,//错误
-  };
-
-  enum class WaitState
-  {
-    IDLE,
-    WAITING_FOR_ACTION_SERVER,
-    WAITING_FOR_ACTION_RESULT,
-    WAITING_FOR_PAYLOAD_STATE,
-  };
-
   /**
-   * @brief 接收并缓存最新的目标点。
+   * @brief Cache the latest target point from the upstream perception topic.
    *
-   * @param msg 来自视觉或上层模块的三维目标点消息。
-   * @return void 无返回值。
-   *
-   * @details
-   * 该目标点不会立即触发动作，只会在后续 `PICK` 宏动作真正执行抓取步骤时被读取。
+   * @param msg Latest target point message.
+   * @return None
    */
   void target_point_callback(const geometry_msgs::msg::Point::SharedPtr msg)
   {
@@ -345,112 +548,75 @@ private:
       have_target_point_ = true;
       publish_state();
     } catch (const std::exception & error) {
-      RCLCPP_ERROR(get_logger(), "target_point_callback failed: %s", error.what());
-      enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+      abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
     }
   }
 
   /**
-   * @brief 接收上层宏动作命令并启动对应状态机。
+   * @brief Accept an action-set command and start the corresponding sequence when idle.
    *
-   * @param msg middleware 命令消息，描述要执行的宏动作模式以及相关参数。
-   * @return void 无返回值。
-   *
-   * @details
-   * - `PICK` 会进入抓取流程
-   * - `PLACE` 会进入放置流程
-   * - `DEFAULT` 会进入回默认点流程
-   * - 如果当前正忙，则不抢占，而是进入错误恢复流程
+   * @param msg Command message that identifies the requested action set.
+   * @return None
    */
   void command_callback(const Arm2MiddlewareCommand::SharedPtr msg)
   {
     try {
-      // 无
-      if (msg->mode == Arm2MiddlewareCommand::MODE_NONE) {
+      if (busy_) {
+        last_error_code_ = Arm2MiddlewareState::ERROR_BUSY_REJECTED;
+        RCLCPP_WARN(
+          get_logger(),
+          "Rejecting action_set_id=%d because middleware is busy",
+          msg->action_set_id);
         publish_state();
         return;
       }
-      // 忙就拒绝执行
-      if (busy_) {
-        RCLCPP_WARN(get_logger(), "Received new middleware command while busy; starting recovery");
-        enter_error_recovery(Arm2MiddlewareState::ERROR_BUSY_REJECTED);
+
+      const auto * action_set = lookup_action_set(msg->action_set_id);
+      if (action_set == nullptr) {
+        active_action_set_id_ = msg->action_set_id;
+        active_action_set_name_.clear();
+        active_step_index_ = kIdleStepIndex;
+        active_step_type_ = StepType::NONE;
+        active_step_label_.clear();
+        abort_execution(
+          Arm2MiddlewareState::ERROR_UNKNOWN_ACTION_SET,
+          "Unknown action_set_id=" + std::to_string(msg->action_set_id));
         return;
       }
 
-      // 命令执行状态
-      active_command_mode_ = msg->mode;
-      // 放置点位序号
-      active_warehouse_index_ = msg->warehouse_index;
-      // J4目标角度（不用）
-      active_target_spin_ = msg->target_spin;
-
-      switch (msg->mode) {
-        // 抓取
-        case Arm2MiddlewareCommand::MODE_PICK:
-          start_macro(MacroState::PICK, 0);
-          return;
-        // 放置
-        case Arm2MiddlewareCommand::MODE_PLACE:
-          if (msg->warehouse_index < 0 ||
-            static_cast<std::size_t>(msg->warehouse_index) >= warehouse_poses_.size())
-          {
-            RCLCPP_WARN(get_logger(), "Received invalid warehouse index %d", msg->warehouse_index);
-            enter_error_recovery(Arm2MiddlewareState::ERROR_INVALID_WAREHOUSE_INDEX);
-            return;
-          }
-          start_macro(MacroState::PLACE, 0);
-          return;
-        // 默认点位
-        case Arm2MiddlewareCommand::MODE_DEFAULT:
-          start_macro(MacroState::DEFAULT, 10);
-          return;
-        // 错误恢复，回到默认点位->无
-        default:
-          RCLCPP_WARN(get_logger(), "Received unknown middleware mode %d", msg->mode);
-          enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
-          return;
-      }
+      start_action_set(*action_set);
     } catch (const std::exception & error) {
-      RCLCPP_ERROR(get_logger(), "command_callback failed: %s", error.what());
-      enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+      abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
     }
   }
 
   /**
-   * @brief 处理底层控制器状态更新。
+   * @brief Mirror controller state updates and abort execution immediately if the controller faults.
    *
-   * @param msg `Arm2ControllerState` 状态消息。
-   * @return void 无返回值。
-   *
-   * @details
-   * 该回调会持续缓存控制器状态；当底层控制器进入 `FAULT` 时，
-   * middleware 会立即转入“回默认点”的恢复路径。
+   * @param msg Latest controller state message.
+   * @return None
    */
   void controller_state_callback(const Arm2ControllerState::SharedPtr msg)
   {
     try {
       latest_controller_state_ = *msg;
-      if (msg->controller_state == Arm2ControllerState::CONTROLLER_STATE_FAULT) {
-        RCLCPP_WARN(get_logger(), "Controller entered FAULT; starting recovery-to-default");
-        enter_error_recovery(Arm2MiddlewareState::ERROR_CONTROLLER_FAULT);
+      if (busy_ && msg->controller_state == Arm2ControllerState::CONTROLLER_STATE_FAULT) {
+        abort_execution(
+          Arm2MiddlewareState::ERROR_CONTROLLER_FAULT,
+          "Controller entered FAULT while executing action set");
         return;
       }
       publish_state();
     } catch (const std::exception & error) {
-      RCLCPP_ERROR(get_logger(), "controller_state_callback failed: %s", error.what());
-      enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+      abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
     }
   }
 
   /**
-   * @brief 处理当前带载状态更新。
+   * @brief Track the active payload model state and resume execution when a payload switch completes.
    *
-   * @param msg `std_msgs::msg::Bool`，`true` 表示当前动力学模型为带载。
-   * @return void 无返回值。
-   *
-   * @details
-   * 当状态机正等待 `/arm2/payload_active` 与期望状态一致时，
-   * 收到匹配的状态值会推动状态机进入下一步。
+   * @param msg Latest payload-active boolean message.
+   * @return None
    */
   void payload_active_callback(const std_msgs::msg::Bool::SharedPtr msg)
   {
@@ -460,387 +626,234 @@ private:
         payload_active_ == desired_payload_active_)
       {
         wait_state_ = WaitState::IDLE;
-        step_index_ += 1;
-        advance_state_machine();
+        executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
+        ++active_step_index_;
+        advance_execution();
         return;
       }
       publish_state();
     } catch (const std::exception & error) {
-      RCLCPP_ERROR(get_logger(), "payload_active_callback failed: %s", error.what());
-      enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+      abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
     }
   }
 
   /**
-   * @brief 周期性检查等待中的异步事件是否已就绪或超时。
+   * @brief Poll asynchronous wait conditions for action-server readiness, action results, and payload switches.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 该定时器不会主动推进正常流程，只负责三类等待状态：
-   * - 等待 action server 可用
-   * - 等待 `/arm2_task_goal` 返回 result
-   * - 等待 `/arm2/payload_active` 与期望载荷状态一致
+   * @param None
+   * @return None
    */
   void timer_callback()
   {
     try {
-      // 空闲
       if (wait_state_ == WaitState::IDLE) {
         return;
       }
 
       const double elapsed = (now() - wait_started_).seconds();
       switch (wait_state_) {
-        // 
         case WaitState::WAITING_FOR_ACTION_SERVER:
           if (task_goal_client_->action_server_is_ready()) {
             if (!pending_task_goal_) {
-              enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+              abort_execution(
+                Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION,
+                "Action server became ready without a pending goal");
               return;
             }
-            const auto pose = *pending_task_goal_;
+            const auto request = pending_task_goal_->request;
             pending_task_goal_.reset();
-            dispatch_task_goal(pose.pose);
+            dispatch_task_goal(request);
             return;
           }
           if (elapsed >= action_server_timeout_sec_) {
-            RCLCPP_WARN(get_logger(), "Timed out waiting for /arm2_task_goal action server");
-            enter_error_recovery(Arm2MiddlewareState::ERROR_ACTION_SERVER_UNAVAILABLE);
+            abort_execution(
+              Arm2MiddlewareState::ERROR_ACTION_SERVER_UNAVAILABLE,
+              "Timed out waiting for /arm2_task_goal action server");
           }
           return;
-        // 等待动作执行完成
         case WaitState::WAITING_FOR_ACTION_RESULT:
           if (elapsed >= action_result_timeout_sec_) {
-            RCLCPP_WARN(get_logger(), "Timed out waiting for /arm2_task_goal result");
-            enter_error_recovery(Arm2MiddlewareState::ERROR_ACTION_TIMEOUT);
+            abort_execution(
+              Arm2MiddlewareState::ERROR_ACTION_TIMEOUT,
+              "Timed out waiting for /arm2_task_goal result");
           }
           return;
-        // 等待带载状态切换
         case WaitState::WAITING_FOR_PAYLOAD_STATE:
           if (elapsed >= payload_wait_timeout_sec_) {
-            RCLCPP_WARN(
-              get_logger(),
-              "Timed out waiting for payload_active=%s",
-              desired_payload_active_ ? "true" : "false");
-            enter_error_recovery(Arm2MiddlewareState::ERROR_PAYLOAD_WAIT_TIMEOUT);
+            abort_execution(
+              Arm2MiddlewareState::ERROR_PAYLOAD_WAIT_TIMEOUT,
+              std::string("Timed out waiting for payload_active=") +
+              (desired_payload_active_ ? "true" : "false"));
           }
           return;
-        // 空闲
         case WaitState::IDLE:
           return;
       }
-    }
-    // 错误恢复 
-    catch (const std::exception & error) {
-      RCLCPP_ERROR(get_logger(), "timer_callback failed: %s", error.what());
-      enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+    } catch (const std::exception & error) {
+      abort_execution(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION, error.what());
     }
   }
 
   /**
-   * @brief 启动一个新的宏动作。
+   * @brief Find an action set by its configured integer identifier.
    *
-   * @param macro_state 要进入的宏状态。
-   * @param step_index 该宏状态的起始步骤号。
-   * @return void 无返回值。
-   *
-   * @details
-   * 该函数会重置等待状态、清空挂起的 action goal，并立即开始推进状态机。
+   * @param action_set_id Requested action-set identifier.
+   * @return const ActionSet * Pointer to the action set when found, otherwise `nullptr`.
    */
-  void start_macro(MacroState macro_state, int step_index)
+  const ActionSet * lookup_action_set(const int32_t action_set_id) const
   {
-    macro_state_ = macro_state;
-    step_index_ = step_index;
-    busy_ = true;
-    in_error_recovery_ = false;
+    const auto match = action_sets_by_id_.find(action_set_id);
+    if (match == action_sets_by_id_.end()) {
+      return nullptr;
+    }
+    return match->second;
+  }
+
+  /**
+   * @brief Initialize runtime state for a new action set and begin executing its first step.
+   *
+   * @param action_set Action-set definition selected by the command interface.
+   * @return None
+   */
+  void start_action_set(const ActionSet & action_set)
+  {
+    current_action_set_ = &action_set;
+    active_action_set_id_ = action_set.id;
+    active_action_set_name_ = action_set.name;
+    active_step_index_ = 0;
+    active_step_type_ = StepType::NONE;
+    active_step_label_.clear();
+
     wait_state_ = WaitState::IDLE;
+    executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
+    busy_ = true;
+    desired_payload_active_ = false;
     pending_task_goal_.reset();
     invalidate_active_goal();
+
+    last_error_code_ = Arm2MiddlewareState::ERROR_NONE;
+    last_move_success_ = true;
+    last_move_error_code_ = 0;
+    last_action_set_success_ = true;
+
     publish_state();
-    advance_state_machine();
+    advance_execution();
   }
 
   /**
-   * @brief 驱动当前宏动作状态机向前执行。
+   * @brief Drive the current action set forward until the next asynchronous wait point or completion.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 该函数会根据 `macro_state_` 分派到不同的流程推进函数；
-   * 如果某一步需要等待异步事件，则会暂停在当前步骤，等待后续回调或超时定时器继续处理。
+   * @param None
+   * @return None
    */
-  void advance_state_machine()
+  void advance_execution()
   {
-    while (busy_) {
-      bool progressed = false;
-      try {
-        switch (macro_state_) {
-          case MacroState::NONE:
-            return;
-          case MacroState::PICK:
-            progressed = advance_pick();
-            break;
-          case MacroState::PLACE:
-            progressed = advance_place();
-            break;
-          case MacroState::DEFAULT:
-            progressed = advance_default(false);
-            break;
-          case MacroState::RECOVERING_DEFAULT:
-            progressed = advance_default(true);
-            break;
-        }
-      } catch (const std::exception & error) {
-        RCLCPP_ERROR(get_logger(), "advance_state_machine failed: %s", error.what());
-        enter_error_recovery(Arm2MiddlewareState::ERROR_INTERNAL_EXCEPTION);
+    while (busy_ && current_action_set_ != nullptr) {
+      if (active_step_index_ < 0 ||
+        static_cast<std::size_t>(active_step_index_) >= current_action_set_->steps.size())
+      {
+        finish_action_set();
         return;
       }
+
+      const auto & step = current_action_set_->steps[static_cast<std::size_t>(active_step_index_)];
+      active_step_type_ = step.type;
+      active_step_label_ = step.label;
+      executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
       publish_state();
-      if (!progressed) {
-        return;
+
+      switch (step.type) {
+        case StepType::MOVE_TARGET_OFFSET: {
+          if (!have_target_point_) {
+            abort_execution(
+              Arm2MiddlewareState::ERROR_NO_TARGET_POINT,
+              "move_target_offset step requires a cached target point");
+            return;
+          }
+
+          TaskGoalRequest request;
+          request.target_xyz = {
+            latest_target_point_.x + step.vector3[0],
+            latest_target_point_.y + step.vector3[1],
+            latest_target_point_.z + step.vector3[2]};
+          request.target_spin = step.target_spin;
+          request.planning_time = step.planning_time.value_or(planning_time_);
+          start_task_goal(request);
+          return;
+        }
+        case StepType::MOVE_FIXED_POSE: {
+          TaskGoalRequest request;
+          request.target_xyz = step.vector3;
+          request.target_spin = step.target_spin;
+          request.planning_time = step.planning_time.value_or(planning_time_);
+          start_task_goal(request);
+          return;
+        }
+        case StepType::SET_VACUUM:
+          publish_vacuum(step.bool_value);
+          ++active_step_index_;
+          break;
+        case StepType::SET_PAYLOAD:
+          publish_payload_command(step.bool_value);
+          if (payload_active_ == step.bool_value) {
+            ++active_step_index_;
+            break;
+          }
+          desired_payload_active_ = step.bool_value;
+          wait_state_ = WaitState::WAITING_FOR_PAYLOAD_STATE;
+          executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_WAITING_FOR_PAYLOAD_STATE;
+          wait_started_ = now();
+          publish_state();
+          return;
+        case StepType::NONE:
+          abort_execution(
+            Arm2MiddlewareState::ERROR_INVALID_CONFIG,
+            "Encountered invalid step type NONE during execution");
+          return;
       }
     }
   }
 
   /**
-   * @brief 推进抓取宏动作的状态机。
+   * @brief Start a task-goal step, either by sending immediately or waiting for the action server.
    *
-   * @return bool `true` 表示本次调用已同步完成一步并可继续推进；
-   * `false` 表示需要等待异步事件或流程已结束。
-   *
-   * @details
-   * 抓取流程包含：打开吸盘、抓取目标点、切换带载、移动到暂存点、切回卸载、
-   * 关闭吸盘、返回默认点。
+   * @param request Fully resolved MoveIt task-goal request.
+   * @return None
    */
-  bool advance_pick()
-  {
-    switch (step_index_) {
-      case 0:
-        step_index_ = 1;
-        return true;
-      // 开吸盘
-      case 1:
-        publish_vacuum(true);
-        step_index_ = 2;
-        return true;
-      // 发布目标点位
-      case 2:
-        if (!have_target_point_) {
-          RCLCPP_WARN(get_logger(), "PICK requested without a cached target point");
-          enter_error_recovery(Arm2MiddlewareState::ERROR_NO_TARGET_POINT);
-          return false;
-        }
-        start_task_goal(Pose4D{
-          latest_target_point_.x,
-          latest_target_point_.y,
-          latest_target_point_.z,
-          active_target_spin_});
-        step_index_ = 3;
-        return false;
-      // 切换负载
-      case 4:
-        publish_payload_command(true);
-        step_index_ = 5;
-        return true;
-      // 等待切换
-      case 5:
-        if (payload_active_ == true) {
-          step_index_ = 6;
-          return true;
-        }
-        desired_payload_active_ = true;
-        wait_state_ = WaitState::WAITING_FOR_PAYLOAD_STATE;
-        wait_started_ = now();
-        return false;
-      // 暂存点位
-      case 6:
-        start_task_goal(staging_pose_);
-        step_index_ = 7;
-        return false;
-      // 切换负载
-      case 8:
-        publish_payload_command(false);
-        step_index_ = 9;
-        return true;
-      // 等待切换
-      case 9:
-        if (payload_active_ == false) {
-          step_index_ = 10;
-          return true;
-        }
-        desired_payload_active_ = false;
-        wait_state_ = WaitState::WAITING_FOR_PAYLOAD_STATE;
-        wait_started_ = now();
-        return false;
-      // 关闭吸盘
-      case 10:
-        publish_vacuum(false);
-        step_index_ = 11;
-        return true;
-      // 回到默认
-      case 11:
-        start_task_goal(default_pose_);
-        step_index_ = 12;
-        return false;
-      // 无
-      case 13:
-        finish_to_none();
-        return false;
-      default:
-        return false;
-    }
-  }
-
-  /**
-   * @brief 推进放置宏动作的状态机。
-   *
-   * @return bool `true` 表示本次调用已同步完成一步并可继续推进；
-   * `false` 表示需要等待异步事件或流程已结束。
-   *
-   * @details
-   * 放置流程包含：打开吸盘、移动到暂存点、切换带载、移动到指定仓库点、
-   * 关闭带载、关闭吸盘、返回默认点。
-   */
-  bool advance_place()
-  {
-    switch (step_index_) {
-      case 0:
-        step_index_ = 1;
-        return true;
-      case 1:
-        publish_vacuum(true);
-        step_index_ = 2;
-        return true;
-      case 2:
-        start_task_goal(staging_pose_);
-        step_index_ = 3;
-        return false;
-      case 4:
-        publish_payload_command(true);
-        step_index_ = 5;
-        return true;
-      case 5:
-        if (payload_active_ == true) {
-          step_index_ = 6;
-          return true;
-        }
-        desired_payload_active_ = true;
-        wait_state_ = WaitState::WAITING_FOR_PAYLOAD_STATE;
-        wait_started_ = now();
-        return false;
-      case 6:
-        if (active_warehouse_index_ < 0 ||
-          static_cast<std::size_t>(active_warehouse_index_) >= warehouse_poses_.size())
-        {
-          enter_error_recovery(Arm2MiddlewareState::ERROR_INVALID_WAREHOUSE_INDEX);
-          return false;
-        }
-        start_task_goal(warehouse_poses_[static_cast<std::size_t>(active_warehouse_index_)]);
-        step_index_ = 7;
-        return false;
-      case 8:
-        publish_payload_command(false);
-        step_index_ = 9;
-        return true;
-      case 9:
-        if (payload_active_ == false) {
-          step_index_ = 10;
-          return true;
-        }
-        desired_payload_active_ = false;
-        wait_state_ = WaitState::WAITING_FOR_PAYLOAD_STATE;
-        wait_started_ = now();
-        return false;
-      case 10:
-        publish_vacuum(false);
-        step_index_ = 11;
-        return true;
-      case 11:
-        start_task_goal(default_pose_);
-        step_index_ = 12;
-        return false;
-      case 13:
-        finish_to_none();
-        return false;
-      default:
-        return false;
-    }
-  }
-
-  /**
-   * @brief 推进“回默认点”或“错误恢复回默认点”流程。
-   *
-   * @param recovering_default `true` 表示当前处于错误恢复状态；
-   * `false` 表示普通的 `DEFAULT` 命令。
-   * @return bool `true` 表示同步推进成功且仍可继续；`false` 表示需要等待异步事件或已结束。
-   *
-   * @details
-   * 该流程只发一个默认点 action，不再切换吸盘或载荷状态。
-   */
-  bool advance_default(bool recovering_default)
-  {
-    if (step_index_ == 10) {
-      start_task_goal(default_pose_);
-      step_index_ = 11;
-      return false;
-    }
-    if (step_index_ == 12) {
-      if (recovering_default) {
-        finish_to_none();
-      } else {
-        finish_to_none();
-      }
-      return false;
-    }
-    return false;
-  }
-
-  /**
-   * @brief 启动一次 `/arm2_task_goal` 请求。
-   *
-   * @param pose 要发送给 `PlanToTaskGoal` 的 4D 目标位姿。
-   * @return void 无返回值。
-   *
-   * @details
-   * 如果 action server 已可用，则立即发送；
-   * 否则先把目标缓存到 `pending_task_goal_`，并进入等待 server 可用状态。
-   */
-  void start_task_goal(const Pose4D & pose)
+  void start_task_goal(const TaskGoalRequest & request)
   {
     if (task_goal_client_->action_server_is_ready()) {
-      dispatch_task_goal(pose);
+      dispatch_task_goal(request);
       return;
     }
-    pending_task_goal_ = PendingTaskGoal{pose};
+
+    pending_task_goal_ = PendingTaskGoal{request};
     wait_state_ = WaitState::WAITING_FOR_ACTION_SERVER;
+    executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_WAITING_FOR_ACTION_SERVER;
     wait_started_ = now();
+    publish_state();
   }
 
   /**
-   * @brief 真正向 `/arm2_task_goal` action server 发送 goal。
+   * @brief Send a resolved task goal to `/arm2_task_goal` and register result callbacks.
    *
-   * @param pose 目标 4D 位姿，包含位置和 spin。
-   * @return void 无返回值。
-   *
-   * @details
-   * 该函数会：
-   * - 组装 `PlanToTaskGoal::Goal`
-   * - 注册 goal response 和 result 回调
-   * - 进入等待 result 状态
+   * @param request Fully resolved MoveIt task-goal request.
+   * @return None
    */
-  void dispatch_task_goal(const Pose4D & pose)
+  void dispatch_task_goal(const TaskGoalRequest & request)
   {
     PlanToTaskGoal::Goal goal;
-    goal.target_xyz = {pose.x, pose.y, pose.z};
-    goal.target_spin = pose.spin;
-    goal.planning_time = planning_time_;
+    goal.target_xyz = request.target_xyz;
+    goal.target_spin = request.target_spin;
+    goal.planning_time = request.planning_time;
     goal.execute = true;
 
     const std::uint64_t sequence = ++goal_sequence_;
     wait_state_ = WaitState::WAITING_FOR_ACTION_RESULT;
+    executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_WAITING_FOR_ACTION_RESULT;
     wait_started_ = now();
     active_goal_handle_.reset();
+    publish_state();
 
     auto options = rclcpp_action::Client<PlanToTaskGoal>::SendGoalOptions();
     options.goal_response_callback =
@@ -850,8 +863,9 @@ private:
           return;
         }
         if (!goal_handle) {
-          RCLCPP_WARN(get_logger(), "Task goal was rejected by /arm2_task_goal");
-          enter_error_recovery(Arm2MiddlewareState::ERROR_GOAL_REJECTED);
+          abort_execution(
+            Arm2MiddlewareState::ERROR_GOAL_REJECTED,
+            "Task goal was rejected by /arm2_task_goal");
           return;
         }
         active_goal_handle_ = goal_handle;
@@ -862,39 +876,37 @@ private:
         if (sequence != goal_sequence_) {
           return;
         }
+
         active_goal_handle_.reset();
+        pending_task_goal_.reset();
         wait_state_ = WaitState::IDLE;
-        last_task_goal_success_ = result.result ? result.result->success : false;
-        last_task_goal_error_code_ = result.result ? result.result->error_code : -1;
+        executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_RUNNING;
 
-        if (macro_state_ == MacroState::RECOVERING_DEFAULT) {
-          if (!last_task_goal_success_) {
-            last_error_code_ = Arm2MiddlewareState::ERROR_DEFAULT_RECOVERY_FAILED;
-          }
-          step_index_ = 12;
-          publish_state();
-          finish_to_none();
-          return;
+        if (result.result) {
+          last_move_success_ = result.result->success;
+          last_move_error_code_ = result.result->error_code;
+        } else {
+          last_move_success_ = false;
+          last_move_error_code_ = -1;
+        }
+        if (!last_move_success_) {
+          last_action_set_success_ = false;
         }
 
-        if (step_index_ == 3 || step_index_ == 7 || step_index_ == 11 || step_index_ == 12) {
-          step_index_ += 1;
-          advance_state_machine();
-          return;
-        }
-        publish_state();
+        ++active_step_index_;
+        advance_execution();
       };
 
     task_goal_client_->async_send_goal(goal, options);
   }
 
   /**
-   * @brief 发布动力学模型切换请求。
+   * @brief Publish a payload-model switch request.
    *
-   * @param attached `true` 表示请求切到带载模型，`false` 表示请求切回空载模型。
-   * @return void 无返回值。
+   * @param attached Requested payload model state.
+   * @return None
    */
-  void publish_payload_command(bool attached)
+  void publish_payload_command(const bool attached)
   {
     std_msgs::msg::Bool msg;
     msg.data = attached;
@@ -902,12 +914,12 @@ private:
   }
 
   /**
-   * @brief 发布吸盘开关命令。
+   * @brief Publish a vacuum actuator command.
    *
-   * @param enabled `true` 表示打开吸盘，`false` 表示关闭吸盘。
-   * @return void 无返回值。
+   * @param enabled Requested vacuum state.
+   * @return None
    */
-  void publish_vacuum(bool enabled)
+  void publish_vacuum(const bool enabled)
   {
     std_msgs::msg::Bool msg;
     msg.data = enabled;
@@ -915,43 +927,38 @@ private:
   }
 
   /**
-   * @brief 进入统一错误恢复流程。
+   * @brief Abort the current action set, clear wait state, and publish an aborted middleware state.
    *
-   * @param error_code 触发恢复的错误码。
-   * @return void 无返回值。
-   *
-   * @details
-   * middleware 的策略是：发生可处理错误时，不直接空闲，而是先切到
-   * `RECOVERING_DEFAULT`，尝试把机械臂送回默认点。
+   * @param error_code Middleware error code that explains why execution stopped.
+   * @param reason Human-readable reason used for logging.
+   * @return None
    */
-  void enter_error_recovery(int error_code)
+  void abort_execution(const int32_t error_code, const std::string & reason)
   {
-    if (macro_state_ == MacroState::RECOVERING_DEFAULT) {
-      last_error_code_ = Arm2MiddlewareState::ERROR_DEFAULT_RECOVERY_FAILED;
-      finish_to_none();
-      return;
+    if (busy_ || current_action_set_ != nullptr) {
+      cancel_active_goal_if_any();
+    } else {
+      invalidate_active_goal();
     }
 
-    last_error_code_ = error_code;
-    in_error_recovery_ = true;
-    busy_ = true;
-    macro_state_ = MacroState::RECOVERING_DEFAULT;
-    step_index_ = 10;
     pending_task_goal_.reset();
     wait_state_ = WaitState::IDLE;
-    cancel_active_goal_if_any();
+    desired_payload_active_ = false;
+    busy_ = false;
+    current_action_set_ = nullptr;
+    executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_ABORTED;
+    last_error_code_ = error_code;
+    last_action_set_success_ = false;
+
+    RCLCPP_WARN(get_logger(), "Middleware aborted: %s", reason.c_str());
     publish_state();
-    advance_state_machine();
   }
 
   /**
-   * @brief 如果当前存在活动的 task goal，则尝试取消它。
+   * @brief Cancel the currently active task goal when one exists and invalidate stale callbacks.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 无论取消请求是否最终成功，函数都会立即使本地保存的 goal 句柄失效，
-   * 避免旧回调继续干扰当前状态机。
+   * @param None
+   * @return None
    */
   void cancel_active_goal_if_any()
   {
@@ -962,12 +969,10 @@ private:
   }
 
   /**
-   * @brief 使当前保存的 action goal 句柄失效。
+   * @brief Invalidate the locally tracked task goal so late callbacks are ignored.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 通过增加 `goal_sequence_` 的方式，让旧 goal 的异步回调自动失效。
+   * @param None
+   * @return None
    */
   void invalidate_active_goal()
   {
@@ -976,81 +981,56 @@ private:
   }
 
   /**
-   * @brief 结束当前流程并回到空闲态。
+   * @brief Mark the current action set as completed and return middleware to idle.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 该函数会清理等待状态、挂起 goal、活动命令上下文，并发布最终的空闲状态。
+   * @param None
+   * @return None
    */
-  void finish_to_none()
+  void finish_action_set()
   {
+    busy_ = false;
     wait_state_ = WaitState::IDLE;
     desired_payload_active_ = false;
     pending_task_goal_.reset();
     invalidate_active_goal();
-    macro_state_ = MacroState::NONE;
-    step_index_ = kIdleStep;
-    busy_ = false;
-    in_error_recovery_ = false;
-    active_command_mode_ = Arm2MiddlewareCommand::MODE_NONE;
-    active_warehouse_index_ = -1;
-    active_target_spin_ = 0.0;
+    current_action_set_ = nullptr;
+    executor_state_ = Arm2MiddlewareState::EXECUTOR_STATE_IDLE;
+    active_action_set_id_ = 0;
+    active_action_set_name_.clear();
+    active_step_index_ = kIdleStepIndex;
+    active_step_type_ = StepType::NONE;
+    active_step_label_.clear();
     publish_state();
   }
 
   /**
-   * @brief 发布 middleware 当前的结构化状态。
+   * @brief Publish the current executor snapshot on `/arm2/middleware/state`.
    *
-   * @return void 无返回值。
-   *
-   * @details
-   * 发布内容包括：
-   * - 当前宏状态
-   * - 当前步骤号
-   * - 是否忙 / 是否处于错误恢复
-   * - 最近错误码
-   * - 当前命令上下文
-   * - 最近一次 task goal 的结果摘要
+   * @param None
+   * @return None
    */
   void publish_state()
   {
     Arm2MiddlewareState msg;
-    msg.macro_state = macro_state_to_msg(macro_state_);
-    msg.step_index = step_index_;
-    msg.busy = busy_;
-    msg.in_error_recovery = in_error_recovery_;
+    msg.executor_state = executor_state_;
+    msg.active_step_type = step_type_to_msg(active_step_type_);
     msg.last_error_code = last_error_code_;
-    msg.active_command_mode = active_command_mode_;
-    msg.warehouse_index = active_warehouse_index_;
+    msg.busy = busy_;
+    msg.active_action_set_id = active_action_set_id_;
+    msg.active_action_set_name = active_action_set_name_;
+    msg.active_step_index = active_step_index_;
+    msg.active_step_label = active_step_label_;
+    msg.have_target_point = have_target_point_;
+    msg.latest_target_point = {latest_target_point_.x, latest_target_point_.y, latest_target_point_.z};
     msg.controller_state = latest_controller_state_.controller_state;
+    msg.controller_payload_attached = latest_controller_state_.payload_attached;
+    msg.controller_pending_payload_switch = latest_controller_state_.pending_payload_switch;
+    msg.controller_detail_code = latest_controller_state_.detail_code;
     msg.payload_active = payload_active_;
-    msg.last_task_goal_success = last_task_goal_success_;
-    msg.last_task_goal_error_code = last_task_goal_error_code_;
+    msg.last_move_success = last_move_success_;
+    msg.last_move_error_code = last_move_error_code_;
+    msg.last_action_set_success = last_action_set_success_;
     state_pub_->publish(msg);
-  }
-
-  /**
-   * @brief 将内部宏状态枚举转换为消息中定义的整型常量。
-   *
-   * @param macro_state 内部宏状态枚举值。
-   * @return int32_t `Arm2MiddlewareState.msg` 中的 `MACRO_STATE_*` 常量值。
-   */
-  int32_t macro_state_to_msg(MacroState macro_state) const
-  {
-    switch (macro_state) {
-      case MacroState::NONE:
-        return Arm2MiddlewareState::MACRO_STATE_NONE;
-      case MacroState::PICK:
-        return Arm2MiddlewareState::MACRO_STATE_PICK;
-      case MacroState::PLACE:
-        return Arm2MiddlewareState::MACRO_STATE_PLACE;
-      case MacroState::DEFAULT:
-        return Arm2MiddlewareState::MACRO_STATE_DEFAULT;
-      case MacroState::RECOVERING_DEFAULT:
-        return Arm2MiddlewareState::MACRO_STATE_RECOVERING_DEFAULT;
-    }
-    return Arm2MiddlewareState::MACRO_STATE_NONE;
   }
 
   std::string command_topic_;
@@ -1061,15 +1041,15 @@ private:
   std::string payload_active_topic_;
   std::string payload_command_topic_;
   std::string vacuum_activate_topic_;
+  std::string action_sets_config_path_;
 
   double planning_time_{5.0};
   double action_server_timeout_sec_{2.0};
   double action_result_timeout_sec_{30.0};
   double payload_wait_timeout_sec_{5.0};
 
-  Pose4D staging_pose_{};
-  Pose4D default_pose_{};
-  std::vector<Pose4D> warehouse_poses_;
+  std::vector<ActionSet> action_sets_;
+  std::unordered_map<int32_t, const ActionSet *> action_sets_by_id_;
 
   rclcpp::Publisher<Arm2MiddlewareState>::SharedPtr state_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr payload_command_pub_;
@@ -1083,25 +1063,25 @@ private:
   rclcpp_action::Client<PlanToTaskGoal>::SharedPtr task_goal_client_;
   rclcpp::TimerBase::SharedPtr timer_;
 
-
-  // 视觉提高最新的抓取点点
   geometry_msgs::msg::Point latest_target_point_{};
   bool have_target_point_{false};
   Arm2ControllerState latest_controller_state_{};
   bool payload_active_{false};
 
-  MacroState macro_state_{MacroState::NONE};
+  const ActionSet * current_action_set_{nullptr};
   WaitState wait_state_{WaitState::IDLE};
-  int step_index_{kIdleStep};
+  int32_t executor_state_{Arm2MiddlewareState::EXECUTOR_STATE_IDLE};
+  int32_t active_action_set_id_{0};
+  std::string active_action_set_name_;
+  int32_t active_step_index_{kIdleStepIndex};
+  StepType active_step_type_{StepType::NONE};
+  std::string active_step_label_;
   bool busy_{false};
-  bool in_error_recovery_{false};
   bool desired_payload_active_{false};
   int32_t last_error_code_{Arm2MiddlewareState::ERROR_NONE};
-  int32_t active_command_mode_{Arm2MiddlewareCommand::MODE_NONE};
-  int32_t active_warehouse_index_{-1};
-  double active_target_spin_{0.0};
-  bool last_task_goal_success_{false};
-  int32_t last_task_goal_error_code_{0};
+  bool last_move_success_{true};
+  int32_t last_move_error_code_{0};
+  bool last_action_set_success_{true};
   rclcpp::Time wait_started_{0, 0, RCL_ROS_TIME};
   std::optional<PendingTaskGoal> pending_task_goal_;
   GoalHandlePlanToTaskGoal::SharedPtr active_goal_handle_;
@@ -1109,11 +1089,11 @@ private:
 };
 
 /**
- * @brief middleware 节点程序入口。
+ * @brief Start the middleware ROS node and spin until shutdown.
  *
- * @param argc 命令行参数个数。
- * @param argv 命令行参数数组。
- * @return int 程序退出码，正常情况下返回 0。
+ * @param argc Command-line argument count.
+ * @param argv Command-line argument vector.
+ * @return int Process exit code.
  */
 int main(int argc, char ** argv)
 {

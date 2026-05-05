@@ -1,31 +1,47 @@
-int32 macro_state
-int32 MACRO_STATE_NONE=0
-int32 MACRO_STATE_PICK=1
-int32 MACRO_STATE_PLACE=2
-int32 MACRO_STATE_DEFAULT=3
-int32 MACRO_STATE_RECOVERING_DEFAULT=4
+int32 executor_state
+int32 EXECUTOR_STATE_IDLE=0
+int32 EXECUTOR_STATE_RUNNING=1
+int32 EXECUTOR_STATE_WAITING_FOR_ACTION_SERVER=2
+int32 EXECUTOR_STATE_WAITING_FOR_ACTION_RESULT=3
+int32 EXECUTOR_STATE_WAITING_FOR_PAYLOAD_STATE=4
+int32 EXECUTOR_STATE_ABORTED=5
 
-int32 step_index
-bool busy
-bool in_error_recovery
+int32 active_step_type
+int32 STEP_TYPE_NONE=0
+int32 STEP_TYPE_MOVE_TARGET_OFFSET=1
+int32 STEP_TYPE_MOVE_FIXED_POSE=2
+int32 STEP_TYPE_SET_VACUUM=3
+int32 STEP_TYPE_SET_PAYLOAD=4
 
 int32 last_error_code
 int32 ERROR_NONE=0
 int32 ERROR_BUSY_REJECTED=1
-int32 ERROR_NO_TARGET_POINT=2
-int32 ERROR_INVALID_WAREHOUSE_INDEX=3
+int32 ERROR_UNKNOWN_ACTION_SET=2
+int32 ERROR_NO_TARGET_POINT=3
 int32 ERROR_ACTION_SERVER_UNAVAILABLE=4
 int32 ERROR_ACTION_TIMEOUT=5
 int32 ERROR_PAYLOAD_WAIT_TIMEOUT=6
 int32 ERROR_CONTROLLER_FAULT=7
 int32 ERROR_GOAL_REJECTED=8
-int32 ERROR_INTERNAL_EXCEPTION=9
-int32 ERROR_DEFAULT_RECOVERY_FAILED=10
+int32 ERROR_INVALID_CONFIG=9
+int32 ERROR_INTERNAL_EXCEPTION=10
 
-int32 active_command_mode
-int32 warehouse_index
+bool busy
+int32 active_action_set_id
+string active_action_set_name
+int32 active_step_index
+string active_step_label
+
+bool have_target_point
+float64[3] latest_target_point
+
 int32 controller_state
+bool controller_payload_attached
+bool controller_pending_payload_switch
+int32 controller_detail_code
+
 bool payload_active
 
-bool last_task_goal_success
-int32 last_task_goal_error_code
+bool last_move_success
+int32 last_move_error_code
+bool last_action_set_success
