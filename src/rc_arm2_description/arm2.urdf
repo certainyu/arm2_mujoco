@@ -81,8 +81,8 @@
     <child link="l1" />
     <axis xyz="0 0 -1" />
     <limit
-      lower="-3.14159"
-      upper="3.14159"
+      lower="-1.865"
+      upper="2.365"
       effort="10"
       velocity="12.0" />
   </joint>
@@ -132,8 +132,8 @@
     <child link="l2" />
     <axis xyz="0 1 0" />
     <limit
-      lower="-3.14159"
-      upper="3.14159"
+      lower="0.0"
+      upper="1.85"
       effort="10"
       velocity="12.0" />
   </joint>
@@ -183,8 +183,8 @@
     <child link="l3" />
     <axis xyz="0 -1 0" />
     <limit
-      lower="-3.14159"
-      upper="3.14159"
+      lower="0.0"
+      upper="2.13861"
       effort="10"
       velocity="12.0" />
   </joint>
