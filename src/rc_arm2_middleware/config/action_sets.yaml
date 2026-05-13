@@ -1,19 +1,18 @@
 action_sets:
+  # Assumptions for fixed points:
+  # - default point: [0.25, 0.0, 0.24]
+  # - staging point: [0.30, -0.10, 0.20]
+  # - warehouse point: temporarily reuse [0.30, -0.10, 0.20], replace as needed
+
   - id: 1
-    name: pick_from_target
+    name: pick_sequence
     steps:
-      - type: set_vacuum # middleware使用type字段决定进那个case
-        label: vacuum_on # 注释描述，代码不使用
+      - type: set_vacuum
+        label: vacuum_on
         enabled: true
 
       - type: move_target_offset
-        label: approach_target
-        offset_xyz: [0.0, 0.0, 0.05]
-        target_spin: 0.0
-        planning_time: 5.0
-
-      - type: move_target_offset
-        label: descend_to_target
+        label: move_to_subscribed_target
         offset_xyz: [0.0, 0.0, 0.0]
         target_spin: 0.0
         planning_time: 5.0
@@ -23,16 +22,7 @@ action_sets:
         attached: true
 
       - type: move_fixed_pose
-        label: lift_to_safe_pose
-        xyz: [0.25, 0.0, 0.24]
-        target_spin: 0.0
-        planning_time: 5.0
-
-  - id: 2
-    name: place_to_fixed_pose
-    steps:
-      - type: move_fixed_pose
-        label: move_to_place
+        label: move_to_staging_pose
         xyz: [0.30, -0.10, 0.20]
         target_spin: 0.0
         planning_time: 5.0
@@ -44,3 +34,247 @@ action_sets:
       - type: set_vacuum
         label: vacuum_off
         enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.25, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 2
+    name: place_sequence
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.30, -0.10, 0.20]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_warehouse_pose
+        xyz: [0.30, -0.10, 0.20]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: set_payload
+        label: detach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.25, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 3
+    name: default_sequence
+    steps:
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.25, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 4
+    name: placeKS_seq
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+  - id: 5
+    name: pickKSFonML200_seq
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.7, 0.0, 0.2]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.25, 0.0, 0.4]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.7, 0.0, 0.2]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: detach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.20, 0.0, 0.24]
+        target_spin: 0.2
+        planning_time: 5.0
+
+  - id: 6
+    name: pickKSFonML200s_seq
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, 0.25, 0.2]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, 0.7, 0.2]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.2, 0.7]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.2, 0.0, 0.7]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, -0.2, 0.7]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, -0.65, 0.05]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: detach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, -0.2, 0.25]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.2, 0.0, 0.25]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.20, 0.0, 0.24]
+        target_spin: 0.2
+        planning_time: 5.0
+
+  - id: 7
+    name: placeKSFon11_seq
+    steps:
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+  
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, -0.55, 0.05]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, -0.65, 0.05]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, -0.2, 0.6]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.2, 0.0, 0.6]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, 0.2, 0.6]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, 0.7, 0.6]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: set_payload
+        label: detach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.0, 0.2, 0.6]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.20, 0.0, 0.24]
+        target_spin: 0.2
+        planning_time: 5.0
+
+      
