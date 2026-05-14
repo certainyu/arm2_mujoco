@@ -242,19 +242,19 @@ action_sets:
       - type: move_fixed_pose
         label: move_to_default_pose
         xyz: [0.2, 0.0, 0.6]
-        target_spin: 0.2
+        target_spin: 0.0
         planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_default_pose
         xyz: [0.0, 0.2, 0.6]
-        target_spin: 0.2
+        target_spin: 0.0
         planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_default_pose
         xyz: [0.0, 0.7, 0.6]
-        target_spin: 0.2
+        target_spin: 0.0
         planning_time: 5.0
 
       - type: set_payload
@@ -268,23 +268,67 @@ action_sets:
       - type: move_fixed_pose
         label: move_to_default_pose
         xyz: [0.0, 0.2, 0.6]
-        target_spin: 0.2
+        target_spin: 0.0
         planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_default_pose
         xyz: [0.20, 0.0, 0.24]
-        target_spin: 0.2
+        target_spin: 0.0
         planning_time: 5.0
 
   - id: 8
-    name: pick_sequence
+    name: pick_sequence_nopayload
     steps:
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.45, 0.0, 0.30]
+        target_spin: -1.57
+        planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_staging_pose
-        xyz: [0.55, 0.0, 0.30]
+        xyz: [0.45, 0.0, 0.16]
+        target_spin: -1.57
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.25, 0.0, 0.47]
         target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.25, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.65, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.25, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.19, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 9
+    name: pick_sequence_s
+    steps:
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.55, 0.0, 0.30]
+        target_spin: -1.57
         planning_time: 5.0
 
       - type: set_vacuum
@@ -293,27 +337,35 @@ action_sets:
 
       - type: move_fixed_pose
         label: move_to_staging_pose
-        xyz: [0.55, 0.0, 0.18]
+        xyz: [0.55, 0.0, 0.16]
+        target_spin: -1.57
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.25, 0.0, 0.47]
         target_spin: 0.0
         planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_staging_pose
-        xyz: [0.25, 0.0, 0.55]
+        xyz: [0.0, 0.25, 0.47]
         target_spin: 0.0
         planning_time: 5.0
 
       - type: move_fixed_pose
         label: move_to_staging_pose
-        xyz: [-0.05, 0.25, 0.55]
+        xyz: [0.0, 0.65, 0.47]
         target_spin: 0.0
         planning_time: 5.0
 
-      - type: move_fixed_pose
-        label: move_to_staging_pose
-        xyz: [-0.05, 0.65, 0.55]
-        target_spin: 0.0
-        planning_time: 5.0
+      - type: set_payload
+        label: dettach_payload
+        attached: false
 
       - type: set_vacuum
         label: vacuum_off
@@ -321,7 +373,62 @@ action_sets:
 
       - type: move_fixed_pose
         label: move_to_staging_pose
-        xyz: [-0.05, 0.25, 0.55]
+        xyz: [0.0, 0.25, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_default_pose
+        xyz: [0.19, 0.0, 0.24]
+        target_spin: 0.0
+        planning_time: 5.0
+
+  - id: 10
+    name: place_on_1st_floor_q
+    steps:
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.45, 0.0, 0.30]
+        target_spin: -1.57
+        planning_time: 5.0
+
+      - type: set_vacuum
+        label: vacuum_on
+        enabled: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.45, 0.0, 0.16]
+        target_spin: -1.57
+        planning_time: 5.0
+
+      - type: set_payload
+        label: attach_payload
+        attached: true
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.20, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.65, 0.47]
+        target_spin: 0.0
+        planning_time: 5.0
+
+      - type: set_payload
+        label: dettach_payload
+        attached: false
+
+      - type: set_vacuum
+        label: vacuum_off
+        enabled: false
+
+      - type: move_fixed_pose
+        label: move_to_staging_pose
+        xyz: [0.0, 0.25, 0.47]
         target_spin: 0.0
         planning_time: 5.0
 
